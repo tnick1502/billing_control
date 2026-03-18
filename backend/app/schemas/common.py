@@ -112,6 +112,30 @@ class OrderItemUpdate(BaseModel):
     note: str | None = None
 
 
+class OrderPartItemCreate(BaseModel):
+    part_id: int
+    qty: Decimal
+    price: Decimal | None = None
+    note: str | None = None
+
+
+class OrderPartItemUpdate(BaseModel):
+    qty: Decimal | None = None
+    price: Decimal | None = None
+    note: str | None = None
+
+
+class OrderPartItemRead(BaseModel):
+    id: int
+    order_id: int
+    part_id: int
+    qty: Decimal
+    price: Decimal | None
+    note: str | None
+
+    model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: decimal_to_str})
+
+
 class OrderItemRead(BaseModel):
     id: int
     order_id: int
@@ -203,6 +227,7 @@ class MonthlyPlanRead(BaseModel):
 class MonthlyPlanGenerate(BaseModel):
     month: date
     order_status: str | None = "confirmed"
+    replace: bool = True  # Удалить существующий план за месяц и создать новый
 
 
 class MonthlyPlanDeviceRead(BaseModel):
@@ -221,7 +246,6 @@ class MonthlyPlanPartRead(BaseModel):
     plan_id: int
     part_id: int
     qty_required: Decimal
-    qty_buffered: Decimal | None
     qty_final: Decimal
     created_at: datetime
 

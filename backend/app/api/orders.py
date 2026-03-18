@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Order, OrderItem
+from app.models import Order, OrderItem, OrderPartItem
 from app.schemas.common import (
     OrderCreate,
     OrderRead,
@@ -11,6 +11,9 @@ from app.schemas.common import (
     OrderItemCreate,
     OrderItemRead,
     OrderItemUpdate,
+    OrderPartItemCreate,
+    OrderPartItemRead,
+    OrderPartItemUpdate,
 )
 
 router = APIRouter(prefix="/orders", tags=["orders"])
@@ -101,5 +104,47 @@ async def delete_order_item(order_id: int, item_id: int, session: AsyncSession =
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(404, "Order item not found")
+    await session.delete(item)
+    return None
+
+
+@router.get("/{order_id}/part-items", response_model=list[OrderPartItemRead])
+async def list_order_part_items(order_id: int, session: AsyncSession = Depends(get_db)):
+    result = await session.execute(select(OrderPartItem).where(OrderPartItem.order_id == order_id))
+    return result.scalars().all()
+
+
+@router.post("/{order_id}/part-items", response_model=OrderPartItemRead)
+async def create_order_part_item(order_id: int, data: OrderPartItemCreate, session: AsyncSession = Depends(get_db)):
+    item = OrderPartItem(order_id=order_id, **data.model_dump())
+    session.add(item)
+    await session.flush()
+    await session.refresh(item)
+    return item
+
+
+@router.patch("/{order_id}/part-items/{item_id}", response_model=OrderPartItemRead)
+async def update_order_part_item(order_id: int, item_id: int, data: OrderPartItemUpdate, session: AsyncSession = Depends(get_db)):
+    result = await session.execute(
+        select(OrderPartItem).where(OrderPartItem.id == item_id, OrderPartItem.order_id == order_id)
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(404, "Order part item not found")
+    for k, v in data.model_dump(exclude_unset=True).items():
+        setattr(item, k, v)
+    await session.flush()
+    await session.refresh(item)
+    return item
+
+
+@router.delete("/{order_id}/part-items/{item_id}", status_code=204)
+async def delete_order_part_item(order_id: int, item_id: int, session: AsyncSession = Depends(get_db)):
+    result = await session.execute(
+        select(OrderPartItem).where(OrderPartItem.id == item_id, OrderPartItem.order_id == order_id)
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(404, "Order part item not found")
     await session.delete(item)
     return None

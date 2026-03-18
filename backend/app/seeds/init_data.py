@@ -1,9 +1,11 @@
+import io
 from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models import (
     Device,
     DeviceAlias,
@@ -20,6 +22,7 @@ from app.models import (
     InvoiceFile,
     InvoicePartLink,
 )
+from app.services.s3_service import upload_file
 
 
 async def seed_database(session: AsyncSession) -> bool:
@@ -75,8 +78,8 @@ async def seed_database(session: AsyncSession) -> bool:
     ])
 
     # Orders
-    o1 = Order(order_no="ORD-2025-001", status="confirmed", order_date=date(2025, 3, 1))
-    o2 = Order(order_no="ORD-2025-002", status="confirmed", order_date=date(2025, 3, 5))
+    o1 = Order(order_no="ORD-2026-001", status="confirmed", order_date=date(2026, 3, 1))
+    o2 = Order(order_no="ORD-2026-002", status="confirmed", order_date=date(2026, 3, 5))
     session.add_all([o1, o2])
     await session.flush()
 
@@ -87,8 +90,8 @@ async def seed_database(session: AsyncSession) -> bool:
         OrderItem(order_id=o2.id, device_id=d3.id, qty=Decimal("3"), price=Decimal("2200.00")),
     ])
 
-    # Monthly plan (March 2025)
-    plan = MonthlyPlan(month=date(2025, 3, 1), revision=1, status="draft", generated_by="seed")
+    # Monthly plan (March 2026)
+    plan = MonthlyPlan(month=date(2026, 3, 1), revision=1, status="draft", generated_by="seed")
     session.add(plan)
     await session.flush()
 
@@ -100,23 +103,43 @@ async def seed_database(session: AsyncSession) -> bool:
 
     # Monthly plan parts (aggregated from BOM)
     session.add_all([
-        MonthlyPlanPart(plan_id=plan.id, part_id=p1.id, qty_required=Decimal("38"), qty_buffered=Decimal("2"), qty_final=Decimal("40")),
-        MonthlyPlanPart(plan_id=plan.id, part_id=p2.id, qty_required=Decimal("38"), qty_buffered=Decimal("2"), qty_final=Decimal("40")),
-        MonthlyPlanPart(plan_id=plan.id, part_id=p3.id, qty_required=Decimal("150"), qty_buffered=Decimal("10"), qty_final=Decimal("160")),
-        MonthlyPlanPart(plan_id=plan.id, part_id=p4.id, qty_required=Decimal("12"), qty_buffered=Decimal("0"), qty_final=Decimal("12")),
-        MonthlyPlanPart(plan_id=plan.id, part_id=p5.id, qty_required=Decimal("30"), qty_buffered=Decimal("0"), qty_final=Decimal("30")),
-        MonthlyPlanPart(plan_id=plan.id, part_id=p6.id, qty_required=Decimal("10"), qty_buffered=Decimal("0"), qty_final=Decimal("10")),
-        MonthlyPlanPart(plan_id=plan.id, part_id=p7.id, qty_required=Decimal("3"), qty_buffered=Decimal("0"), qty_final=Decimal("3")),
+        MonthlyPlanPart(plan_id=plan.id, part_id=p1.id, qty_required=Decimal("38"), qty_final=Decimal("38")),
+        MonthlyPlanPart(plan_id=plan.id, part_id=p2.id, qty_required=Decimal("38"), qty_final=Decimal("38")),
+        MonthlyPlanPart(plan_id=plan.id, part_id=p3.id, qty_required=Decimal("150"), qty_final=Decimal("150")),
+        MonthlyPlanPart(plan_id=plan.id, part_id=p4.id, qty_required=Decimal("12"), qty_final=Decimal("12")),
+        MonthlyPlanPart(plan_id=plan.id, part_id=p5.id, qty_required=Decimal("30"), qty_final=Decimal("30")),
+        MonthlyPlanPart(plan_id=plan.id, part_id=p6.id, qty_required=Decimal("10"), qty_final=Decimal("10")),
+        MonthlyPlanPart(plan_id=plan.id, part_id=p7.id, qty_required=Decimal("3"), qty_final=Decimal("3")),
     ])
 
     # Invoice
-    inv = Invoice(invoice_no="INV-001", invoice_date=date(2025, 3, 10), total_amount=Decimal("50000.00"), status="received")
+    inv = Invoice(invoice_no="INV-001", invoice_date=date(2026, 3, 10), total_amount=Decimal("50000.00"), status="received")
     session.add(inv)
     await session.flush()
 
     session.add_all([
-        InvoicePartLink(invoice_id=inv.id, plan_id=plan.id, part_id=p1.id, qty_covered=Decimal("40"), amount_allocated=Decimal("12000.00")),
-        InvoicePartLink(invoice_id=inv.id, plan_id=plan.id, part_id=p2.id, qty_covered=Decimal("40"), amount_allocated=Decimal("20000.00")),
+        InvoicePartLink(invoice_id=inv.id, plan_id=plan.id, part_id=p1.id, qty_covered=Decimal("38"), amount_allocated=Decimal("12000.00")),
+        InvoicePartLink(invoice_id=inv.id, plan_id=plan.id, part_id=p2.id, qty_covered=Decimal("38"), amount_allocated=Decimal("20000.00")),
     ])
+
+    # Test invoice file (demo)
+    content = b"Testovyy schet INV-001\n\nUslovnyy schet dlya demonstratsii raboty.\nData: 10.03.2026\nSumma: 50000 RUB"
+    obj_key, etag, size = await upload_file(
+        io.BytesIO(content),
+        "INV-001-schet.pdf",
+        "application/pdf",
+        prefix="invoices",
+    )
+    db_file = File(
+        storage="s3",
+        bucket=settings.s3_bucket,
+        object_key=obj_key,
+        etag=etag,
+        content_type="application/pdf",
+        size_bytes=size,
+    )
+    session.add(db_file)
+    await session.flush()
+    session.add(InvoiceFile(invoice_id=inv.id, file_id=db_file.id, role="original"))
 
     return True

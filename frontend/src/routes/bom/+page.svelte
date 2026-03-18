@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import { formatQty } from '$lib/format';
   import type { Device, BomVersion, BomItem, BomVersionCreate, BomItemCreate } from '$lib/api';
 
   let devices: Device[] = [];
@@ -13,7 +14,7 @@
   let bomModalOpen = false;
   let bomForm: BomVersionCreate = { version: 1, status: 'draft' };
   let itemModalOpen = false;
-  let itemForm: BomItemCreate = { part_id: 0, qty_per_device: '1', scrap_rate: null, note: null };
+  let itemForm: BomItemCreate = { part_id: 0, qty_per_device: '1', note: null };
   let editingItemId: number | null = null;
 
   onMount(load);
@@ -37,6 +38,11 @@
     bomItems = [];
     try {
       boms = await api.bom.list(d.id);
+      const activeBom = boms.find((b) => b.status === 'active') ?? boms[0];
+      if (activeBom) {
+        selectedBom = activeBom;
+        bomItems = await api.bom.items.list(activeBom.id);
+      }
     } catch (e) {
       console.error(e);
     }
@@ -81,13 +87,13 @@
   function openAddItem() {
     if (!selectedBom) return;
     editingItemId = null;
-    itemForm = { part_id: parts[0]?.id ?? 0, qty_per_device: '1', scrap_rate: null, note: null };
+    itemForm = { part_id: parts[0]?.id ?? 0, qty_per_device: '1', note: null };
     itemModalOpen = true;
   }
 
   function openEditItem(item: BomItem) {
     editingItemId = item.id;
-    itemForm = { part_id: item.part_id, qty_per_device: item.qty_per_device, scrap_rate: item.scrap_rate, note: item.note };
+    itemForm = { part_id: item.part_id, qty_per_device: item.qty_per_device, note: item.note };
     itemModalOpen = true;
   }
 
@@ -145,16 +151,18 @@
           <h2 class="text-lg text-white">BOM для {selectedDevice.primary_name}</h2>
           <button on:click={openCreateBom} class="px-3 py-1.5 bg-amber-500 text-black rounded-lg hover:bg-amber-400 text-sm">Новая версия</button>
         </div>
-        <div class="space-y-2 mb-6">
+        <div class="space-y-2 mb-4">
           {#each boms as b}
-            <div class="flex items-center gap-4 p-3 bg-surface-800 rounded-lg border border-zinc-700">
+            <button
+              on:click={() => selectBom(b)}
+              class="w-full flex items-center gap-4 p-3 bg-surface-800 rounded-lg border text-left {selectedBom?.id === b.id ? 'border-amber-500' : 'border-zinc-700'}"
+            >
               <span class="font-mono">v{b.version}</span>
               <span class="px-2 py-0.5 rounded text-sm bg-zinc-700">{b.status}</span>
               {#if b.status === 'draft'}
-                <button on:click={() => setBomStatus(b.id, 'active')} class="text-emerald-500 text-sm">Активировать</button>
+                <button on:click={(e) => { e.stopPropagation(); setBomStatus(b.id, 'active'); }} class="text-emerald-500 text-sm">Активировать</button>
               {/if}
-              <button on:click={() => selectBom(b)} class="text-amber-500 text-sm">Позиции</button>
-            </div>
+            </button>
           {/each}
         </div>
 
@@ -166,7 +174,6 @@
                 <tr>
                   <th class="px-4 py-3 font-medium">Деталь</th>
                   <th class="px-4 py-3 font-medium">Кол-во на прибор</th>
-                  <th class="px-4 py-3 font-medium">Брак %</th>
                   <th class="px-4 py-3 w-24"></th>
                 </tr>
               </thead>
@@ -174,8 +181,7 @@
                 {#each bomItems as i}
                   <tr class="hover:bg-zinc-800/50">
                     <td class="px-4 py-3">{partName(i.part_id)}</td>
-                    <td class="px-4 py-3 font-mono">{i.qty_per_device}</td>
-                    <td class="px-4 py-3">{i.scrap_rate ?? '—'}</td>
+                    <td class="px-4 py-3 font-mono">{formatQty(i.qty_per_device)}</td>
                     <td class="px-4 py-3">
                       <button on:click={() => openEditItem(i)} class="text-amber-500 text-sm mr-2">Изм.</button>
                       <button on:click={() => removeItem(i.id)} class="text-red-400 text-sm">Удал.</button>
@@ -230,11 +236,7 @@
         </div>
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Кол-во на прибор</label>
-          <input type="number" step="0.000001" bind:value={itemForm.qty_per_device} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
-        </div>
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Брак (0-1)</label>
-          <input type="number" step="0.000001" bind:value={itemForm.scrap_rate} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" placeholder="0.02" />
+          <input type="number" step="any" bind:value={itemForm.qty_per_device} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
         </div>
         <div class="flex gap-2 pt-2">
           <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Сохранить</button>

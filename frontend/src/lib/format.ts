@@ -1,0 +1,20 @@
+/** Format quantity: show as integer when whole, otherwise up to 2 decimals */
+export function formatQty(val: string | number | null | undefined): string {
+  if (val == null || val === '') return '—';
+  const n = typeof val === 'string' ? parseFloat(val) : val;
+  if (isNaN(n)) return String(val);
+  if (Number.isInteger(n)) return String(n);
+  const rounded = Math.round(n * 100) / 100;
+  return rounded % 1 === 0 ? String(Math.round(rounded)) : rounded.toFixed(2);
+}
+
+/** Format date as DD.MM.YYYY */
+export function formatDate(val: string | null | undefined): string {
+  if (val == null || val === '') return '—';
+  const d = new Date(val);
+  if (isNaN(d.getTime())) return String(val);
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}.${month}.${year}`;
+}

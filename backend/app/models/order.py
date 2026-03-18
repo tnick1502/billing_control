@@ -16,6 +16,7 @@ class Order(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     items: Mapped[list["OrderItem"]] = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
+    part_items: Mapped[list["OrderPartItem"]] = relationship("OrderPartItem", back_populates="order", cascade="all, delete-orphan")
 
 
 class OrderItem(Base):

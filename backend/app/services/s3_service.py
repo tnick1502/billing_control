@@ -31,10 +31,12 @@ async def ensure_bucket_exists() -> None:
     await asyncio.to_thread(_ensure)
 
 
-def _upload_file_sync(file_obj: BinaryIO, filename: str, content_type: str | None) -> tuple[str, str | None, int | None]:
+def _upload_file_sync(
+    file_obj: BinaryIO, filename: str, content_type: str | None, prefix: str = "invoices"
+) -> tuple[str, str | None, int | None]:
     """Upload file to S3. Returns (object_key, etag, size_bytes)."""
     client = get_s3_client()
-    object_key = f"invoices/{uuid.uuid4().hex}/{filename}"
+    object_key = f"{prefix}/{uuid.uuid4().hex}/{filename}"
     file_obj.seek(0)
     data = file_obj.read()
     size = len(data)
@@ -52,8 +54,10 @@ def _upload_file_sync(file_obj: BinaryIO, filename: str, content_type: str | Non
     return object_key, response.get("ETag", "").strip('"'), size
 
 
-async def upload_file(file_obj: BinaryIO, filename: str, content_type: str | None = None) -> tuple[str, str | None, int | None]:
-    return await asyncio.to_thread(_upload_file_sync, file_obj, filename, content_type)
+async def upload_file(
+    file_obj: BinaryIO, filename: str, content_type: str | None = None, prefix: str = "invoices"
+) -> tuple[str, str | None, int | None]:
+    return await asyncio.to_thread(_upload_file_sync, file_obj, filename, content_type, prefix)
 
 
 def get_presigned_url(bucket: str, object_key: str, expires_in: int = 3600) -> str:

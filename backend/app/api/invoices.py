@@ -66,6 +66,16 @@ async def delete_invoice(invoice_id: int, session: AsyncSession = Depends(get_db
     return None
 
 
+@router.get("/{invoice_id}/files", response_model=list[FileRead])
+async def list_invoice_files(invoice_id: int, session: AsyncSession = Depends(get_db)):
+    result = await session.execute(
+        select(FileModel)
+        .join(InvoiceFile, InvoiceFile.file_id == FileModel.id)
+        .where(InvoiceFile.invoice_id == invoice_id)
+    )
+    return list(result.scalars().all())
+
+
 @router.post("/{invoice_id}/upload", response_model=FileRead)
 async def upload_invoice_file(
     invoice_id: int,

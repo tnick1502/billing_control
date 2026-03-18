@@ -48,6 +48,12 @@ export const api = {
       update: (orderId: number, itemId: number, data: Partial<OrderItemCreate>) => fetchApi<OrderItem>(`/orders/${orderId}/items/${itemId}`, { method: 'PATCH', body: JSON.stringify(data) }),
       delete: (orderId: number, itemId: number) => fetchApi<void>(`/orders/${orderId}/items/${itemId}`, { method: 'DELETE' }),
     },
+    partItems: {
+      list: (orderId: number) => fetchApi<OrderPartItem[]>(`/orders/${orderId}/part-items`),
+      create: (orderId: number, data: OrderPartItemCreate) => fetchApi<OrderPartItem>(`/orders/${orderId}/part-items`, { method: 'POST', body: JSON.stringify(data) }),
+      update: (orderId: number, itemId: number, data: Partial<OrderPartItemCreate>) => fetchApi<OrderPartItem>(`/orders/${orderId}/part-items/${itemId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+      delete: (orderId: number, itemId: number) => fetchApi<void>(`/orders/${orderId}/part-items/${itemId}`, { method: 'DELETE' }),
+    },
   },
   bom: {
     list: (deviceId: number) => fetchApi<BomVersion[]>(`/devices/${deviceId}/bom`),
@@ -66,11 +72,12 @@ export const api = {
     list: () => fetchApi<MonthlyPlan[]>('/monthly-plans'),
     get: (id: number) => fetchApi<MonthlyPlan>(`/monthly-plans/${id}`),
     create: (data: MonthlyPlanCreate) => fetchApi<MonthlyPlan>('/monthly-plans', { method: 'POST', body: JSON.stringify(data) }),
-    generate: (data: { month: string; order_status?: string }) => fetchApi<MonthlyPlan>('/monthly-plans/generate', { method: 'POST', body: JSON.stringify(data) }),
+    generate: (data: { month: string; order_status?: string; replace?: boolean }) => fetchApi<MonthlyPlan>('/monthly-plans/generate', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: number, data: Partial<MonthlyPlanCreate>) => fetchApi<MonthlyPlan>(`/monthly-plans/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     delete: (id: number) => fetchApi<void>(`/monthly-plans/${id}`, { method: 'DELETE' }),
     devices: (planId: number) => fetchApi<MonthlyPlanDevice[]>(`/monthly-plans/${planId}/devices`),
     parts: (planId: number) => fetchApi<MonthlyPlanPart[]>(`/monthly-plans/${planId}/parts`),
+    partsWithCoverage: (planId: number) => fetchApi<MonthlyPlanPartWithCoverage[]>(`/monthly-plans/${planId}/parts-with-coverage`),
   },
   invoices: {
     list: () => fetchApi<Invoice[]>('/invoices'),
@@ -78,6 +85,7 @@ export const api = {
     create: (data: InvoiceCreate) => fetchApi<Invoice>('/invoices', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: number, data: Partial<InvoiceCreate>) => fetchApi<Invoice>(`/invoices/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     delete: (id: number) => fetchApi<void>(`/invoices/${id}`, { method: 'DELETE' }),
+    files: (id: number) => fetchApi<InvoiceFileInfo[]>(`/invoices/${id}/files`),
     upload: async (id: number, file: File) => {
       const fd = new FormData();
       fd.append('file', file);
@@ -153,6 +161,20 @@ export interface OrderItem {
   price: string | null;
   note: string | null;
 }
+export interface OrderPartItem {
+  id: number;
+  order_id: number;
+  part_id: number;
+  qty: string;
+  price: string | null;
+  note: string | null;
+}
+export interface OrderPartItemCreate {
+  part_id: number;
+  qty: string;
+  price?: string | null;
+  note?: string | null;
+}
 export interface OrderItemCreate {
   device_id: number;
   qty: string;
@@ -216,11 +238,25 @@ export interface MonthlyPlanPart {
   plan_id: number;
   part_id: number;
   qty_required: string;
-  qty_buffered: string | null;
   qty_final: string;
   created_at: string;
 }
+export interface PartInvoiceCoverage {
+  invoice_id: number;
+  invoice_no: string;
+}
+export interface MonthlyPlanPartWithCoverage extends MonthlyPlanPart {
+  has_invoice: boolean;
+  invoices?: PartInvoiceCoverage[];
+}
 
+export interface InvoiceFileInfo {
+  id: number;
+  object_key: string;
+  content_type: string | null;
+  size_bytes: number | null;
+  uploaded_at: string;
+}
 export interface Invoice {
   id: number;
   invoice_no: string;

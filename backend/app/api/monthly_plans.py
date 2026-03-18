@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPart
+from app.models import MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPart, InvoicePartLink, Invoice
 from app.schemas.common import (
     MonthlyPlanCreate,
     MonthlyPlanRead,
@@ -35,7 +35,7 @@ async def create_monthly_plan(data: MonthlyPlanCreate, session: AsyncSession = D
 @router.post("/generate", response_model=MonthlyPlanRead)
 async def generate_plan(data: MonthlyPlanGenerate, session: AsyncSession = Depends(get_db)):
     try:
-        plan = await do_generate(session, data.month, data.order_status)
+        plan = await do_generate(session, data.month, data.order_status, data.replace)
         await session.flush()
         await session.refresh(plan)
         return plan
@@ -85,3 +85,35 @@ async def list_plan_devices(plan_id: int, session: AsyncSession = Depends(get_db
 async def list_plan_parts(plan_id: int, session: AsyncSession = Depends(get_db)):
     result = await session.execute(select(MonthlyPlanPart).where(MonthlyPlanPart.plan_id == plan_id))
     return result.scalars().all()
+
+
+@router.get("/{plan_id}/parts-with-coverage")
+async def list_plan_parts_with_coverage(plan_id: int, session: AsyncSession = Depends(get_db)):
+    """Returns plan parts with invoice coverage (invoice_no for each part)."""
+    parts_result = await session.execute(
+        select(MonthlyPlanPart).where(MonthlyPlanPart.plan_id == plan_id)
+    )
+    parts = list(parts_result.scalars().all())
+    links_result = await session.execute(
+        select(InvoicePartLink.part_id, InvoicePartLink.invoice_id, Invoice.invoice_no)
+        .join(Invoice, Invoice.id == InvoicePartLink.invoice_id)
+        .where(InvoicePartLink.plan_id == plan_id)
+    )
+    invoices_by_part: dict[int, list[dict]] = {p.part_id: [] for p in parts}
+    for row in links_result.all():
+        invoices_by_part.setdefault(row.part_id, []).append(
+            {"invoice_id": row.invoice_id, "invoice_no": row.invoice_no}
+        )
+    return [
+        {
+            "id": p.id,
+            "plan_id": p.plan_id,
+            "part_id": p.part_id,
+            "qty_required": str(p.qty_required),
+            "qty_final": str(p.qty_final),
+            "created_at": p.created_at.isoformat(),
+            "has_invoice": len(invoices_by_part.get(p.part_id, [])) > 0,
+            "invoices": invoices_by_part.get(p.part_id, []),
+        }
+        for p in parts
+    ]

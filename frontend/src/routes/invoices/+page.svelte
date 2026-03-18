@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import type { Invoice, InvoiceCreate, InvoicePartLink, InvoicePartLinkCreate } from '$lib/api';
+  import { formatQty, formatDate } from '$lib/format';
+  import type { Invoice, InvoiceCreate, InvoicePartLink, InvoicePartLinkCreate, InvoiceFileInfo } from '$lib/api';
 
   let invoices: Invoice[] = [];
   let plans: { id: number; month: string }[] = [];
@@ -12,9 +13,11 @@
   let editingId: number | null = null;
   let selectedInvoice: Invoice | null = null;
   let invoiceParts: InvoicePartLink[] = [];
+  let invoiceFiles: InvoiceFileInfo[] = [];
   let partModalOpen = false;
   let partForm: InvoicePartLinkCreate = { plan_id: 0, part_id: 0, qty_covered: null, amount_allocated: null };
   let partFileInput: HTMLInputElement;
+  let createFileInput: HTMLInputElement;
 
   onMount(load);
 
@@ -36,6 +39,7 @@
   function openCreate() {
     editingId = null;
     form = { invoice_no: '', invoice_date: new Date().toISOString().slice(0, 10), currency: 'RUB', status: 'received' };
+    if (createFileInput) createFileInput.value = '';
     modalOpen = true;
   }
 
@@ -50,7 +54,12 @@
       if (editingId) {
         await api.invoices.update(editingId, form);
       } else {
-        await api.invoices.create(form);
+        if (!createFileInput?.files?.length) {
+          alert('При создании счёта обязательно приложите файл');
+          return;
+        }
+        const inv = await api.invoices.create(form);
+        await api.invoices.upload(inv.id, createFileInput.files[0]);
       }
       modalOpen = false;
       load();
@@ -71,7 +80,10 @@
 
   async function openInvoice(i: Invoice) {
     selectedInvoice = i;
-    invoiceParts = await api.invoices.parts.list(i.id);
+    [invoiceParts, invoiceFiles] = await Promise.all([
+      api.invoices.parts.list(i.id),
+      api.invoices.files(i.id),
+    ]);
   }
 
   function openAddPart() {
@@ -106,6 +118,16 @@
     try {
       await api.invoices.upload(selectedInvoice.id, partFileInput.files[0]);
       partFileInput.value = '';
+      invoiceFiles = await api.invoices.files(selectedInvoice.id);
+    } catch (e) {
+      alert((e as Error).message);
+    }
+  }
+
+  async function downloadFile(fileId: number) {
+    try {
+      const { url } = await api.files.presignedUrl(fileId);
+      window.open(url, '_blank');
     } catch (e) {
       alert((e as Error).message);
     }
@@ -146,8 +168,8 @@
           {#each invoices as i}
             <tr class="hover:bg-zinc-800/50">
               <td class="px-4 py-3 font-mono">{i.invoice_no}</td>
-              <td class="px-4 py-3">{i.invoice_date}</td>
-              <td class="px-4 py-3">{i.total_amount ?? '—'}</td>
+              <td class="px-4 py-3">{formatDate(i.invoice_date)}</td>
+              <td class="px-4 py-3">{formatQty(i.total_amount)}</td>
               <td class="px-4 py-3"><span class="px-2 py-0.5 rounded text-sm bg-zinc-700">{i.status}</span></td>
               <td class="px-4 py-3">
                 <button on:click={() => openInvoice(i)} class="text-emerald-500 hover:text-emerald-400 mr-2">Детали</button>
@@ -166,9 +188,17 @@
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" on:click={() => selectedInvoice = null} role="button" tabindex="0">
     <div class="bg-surface-800 rounded-xl p-6 w-full max-w-2xl max-h-[80vh] overflow-auto border border-zinc-700" on:click|stopPropagation role="dialog">
       <h2 class="text-lg font-semibold text-white mb-4">Счёт {selectedInvoice.invoice_no}</h2>
-      <div class="mb-4 flex gap-2 items-center">
-        <input type="file" bind:this={partFileInput} class="text-sm text-zinc-400" />
-        <button on:click={uploadFile} class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 text-sm">Загрузить файл</button>
+      <div class="mb-4">
+        <h3 class="text-sm text-zinc-400 mb-2">Файлы счёта</h3>
+        <div class="flex flex-wrap gap-2 items-center mb-2">
+          {#each invoiceFiles as f}
+            <button on:click={() => downloadFile(f.id)} class="px-3 py-1.5 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600 text-sm">
+              Скачать
+            </button>
+          {/each}
+          <input type="file" bind:this={partFileInput} class="text-sm text-zinc-400" />
+          <button on:click={uploadFile} class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 text-sm">Загрузить</button>
+        </div>
       </div>
       <button on:click={openAddPart} class="mb-4 px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 text-sm">Привязать к детали</button>
       <table class="w-full">
@@ -186,8 +216,8 @@
             <tr>
               <td class="px-3 py-2">{planLabel(lp.plan_id)}</td>
               <td class="px-3 py-2">{partName(lp.part_id)}</td>
-              <td class="px-3 py-2 font-mono">{lp.qty_covered ?? '—'}</td>
-              <td class="px-3 py-2 font-mono">{lp.amount_allocated ?? '—'}</td>
+              <td class="px-3 py-2 font-mono">{formatQty(lp.qty_covered)}</td>
+              <td class="px-3 py-2 font-mono">{formatQty(lp.amount_allocated)}</td>
               <td>
                 <button on:click={() => removePart(lp.id)} class="text-red-400 text-sm">Удал.</button>
               </td>
@@ -221,6 +251,12 @@
           <label class="block text-sm text-zinc-400 mb-1">Статус</label>
           <input bind:value={form.status} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
         </div>
+        {#if !editingId}
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">Файл счёта <span class="text-red-400">*</span></label>
+            <input type="file" bind:this={createFileInput} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white text-sm" required />
+          </div>
+        {/if}
         <div class="flex gap-2 pt-2">
           <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Сохранить</button>
           <button type="button" on:click={() => modalOpen = false} class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600">Отмена</button>

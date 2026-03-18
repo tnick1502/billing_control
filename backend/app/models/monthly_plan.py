@@ -47,7 +47,6 @@ class MonthlyPlanPart(Base):
     plan_id: Mapped[int] = mapped_column(ForeignKey("monthly_plans.id", ondelete="CASCADE"), nullable=False)
     part_id: Mapped[int] = mapped_column(ForeignKey("parts.id", ondelete="CASCADE"), nullable=False)
     qty_required: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
-    qty_buffered: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
     qty_final: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
@@ -55,3 +54,17 @@ class MonthlyPlanPart(Base):
 
     plan: Mapped["MonthlyPlan"] = relationship("MonthlyPlan", back_populates="parts")
     part: Mapped["Part"] = relationship("Part", foreign_keys=[part_id])
+    files: Mapped[list["MonthlyPlanPartFile"]] = relationship(
+        "MonthlyPlanPartFile", back_populates="plan_part", cascade="all, delete-orphan"
+    )
+
+
+class MonthlyPlanPartFile(Base):
+    __tablename__ = "monthly_plan_part_files"
+
+    plan_part_id: Mapped[int] = mapped_column(ForeignKey("monthly_plan_parts.id", ondelete="CASCADE"), primary_key=True, nullable=False)
+    file_id: Mapped[int] = mapped_column(ForeignKey("files.id", ondelete="CASCADE"), primary_key=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    plan_part: Mapped["MonthlyPlanPart"] = relationship("MonthlyPlanPart", back_populates="files")
+    file: Mapped["File"] = relationship("File")
