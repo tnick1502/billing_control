@@ -51,7 +51,7 @@ class DeviceAliasRead(BaseModel):
 
 
 class PartBase(BaseModel):
-    sku: str
+    sku: str | None = None  # Auto-generated if not provided
     name: str
     uom: str
     is_active: bool = True
@@ -62,7 +62,6 @@ class PartCreate(PartBase):
 
 
 class PartUpdate(BaseModel):
-    sku: str | None = None
     name: str | None = None
     uom: str | None = None
     is_active: bool | None = None

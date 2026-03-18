@@ -6,7 +6,7 @@
   let parts: Part[] = [];
   let loading = true;
   let modalOpen = false;
-  let form: PartCreate = { sku: '', name: '', uom: 'шт', is_active: true };
+  let form: PartCreate = { name: '', uom: 'шт', is_active: true };
   let editingId: number | null = null;
 
   onMount(load);
@@ -24,7 +24,7 @@
 
   function openCreate() {
     editingId = null;
-    form = { sku: '', name: '', uom: 'шт', is_active: true };
+    form = { name: '', uom: 'шт', is_active: true };
     modalOpen = true;
   }
 
@@ -105,10 +105,12 @@
     <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
       <h2 class="text-lg font-semibold text-white mb-4">{editingId ? 'Редактировать' : 'Новая деталь'}</h2>
       <form on:submit|preventDefault={save} class="space-y-4">
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">SKU</label>
-          <input bind:value={form.sku} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
-        </div>
+        {#if editingId}
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">SKU</label>
+            <input bind:value={form.sku} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" readonly />
+          </div>
+        {/if}
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Название</label>
           <input bind:value={form.name} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />

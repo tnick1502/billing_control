@@ -135,7 +135,7 @@ export interface Part {
   created_at: string;
 }
 export interface PartCreate {
-  sku: string;
+  sku?: string | null;
   name: string;
   uom: string;
   is_active?: boolean;
