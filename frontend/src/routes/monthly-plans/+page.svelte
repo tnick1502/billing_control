@@ -22,7 +22,7 @@
   let createInvoiceModalOpen = false;
   let createInvoicePlanId: number | null = null;
   let createInvoicePartIds: number[] = [];
-  let createInvoiceForm: InvoiceCreate = { invoice_no: '', invoice_date: new Date().toISOString().slice(0, 10), currency: 'RUB', status: 'received' };
+  let createInvoiceForm: InvoiceCreate = { invoice_date: new Date().toISOString().slice(0, 10), currency: 'RUB', status: 'received' };
   let createInvoiceFileInput: HTMLInputElement;
 
   onMount(load);
@@ -115,7 +115,7 @@
   function openCreateInvoiceModal(planId: number, partIds: number[]) {
     createInvoicePlanId = planId;
     createInvoicePartIds = partIds;
-    createInvoiceForm = { invoice_no: '', invoice_date: new Date().toISOString().slice(0, 10), currency: 'RUB', status: 'received' };
+    createInvoiceForm = { invoice_date: new Date().toISOString().slice(0, 10), currency: 'RUB', status: 'received' };
     if (createInvoiceFileInput) createInvoiceFileInput.value = '';
     createInvoiceModalOpen = true;
   }
@@ -296,12 +296,12 @@
       <h2 class="text-lg font-semibold text-white mb-4">Создать счёт и привязать к {createInvoicePartIds.length} деталям</h2>
       <form on:submit|preventDefault={saveCreateInvoice} class="space-y-4">
         <div>
-          <label class="block text-sm text-zinc-400 mb-1">№ счёта</label>
-          <input bind:value={createInvoiceForm.invoice_no} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
-        </div>
-        <div>
           <label class="block text-sm text-zinc-400 mb-1">Дата</label>
           <input type="date" bind:value={createInvoiceForm.invoice_date} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
+        </div>
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Валюта</label>
+          <input bind:value={createInvoiceForm.currency} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" placeholder="RUB" />
         </div>
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Файл счёта <span class="text-red-400">*</span></label>

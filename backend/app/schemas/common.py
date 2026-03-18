@@ -16,7 +16,7 @@ class BaseSchema(BaseModel):
 
 
 class DeviceBase(BaseModel):
-    sku: str
+    sku: str | None = None  # Auto-generated if not provided
     primary_name: str
     model: str | None = None
     is_active: bool = True
@@ -27,7 +27,6 @@ class DeviceCreate(DeviceBase):
 
 
 class DeviceUpdate(BaseModel):
-    sku: str | None = None
     primary_name: str | None = None
     model: str | None = None
     is_active: bool | None = None
@@ -253,7 +252,7 @@ class MonthlyPlanPartRead(BaseModel):
 
 
 class InvoiceBase(BaseModel):
-    invoice_no: str
+    invoice_no: str | None = None  # Auto-generated if not provided
     invoice_date: date
     currency: str = "RUB"
     total_amount: Decimal | None = None
@@ -266,7 +265,6 @@ class InvoiceCreate(InvoiceBase):
 
 
 class InvoiceUpdate(BaseModel):
-    invoice_no: str | None = None
     invoice_date: date | None = None
     currency: str | None = None
     total_amount: Decimal | None = None

@@ -8,6 +8,18 @@ export function formatQty(val: string | number | null | undefined): string {
   return rounded % 1 === 0 ? String(Math.round(rounded)) : rounded.toFixed(2);
 }
 
+/** Format amount: 50.000,00 (dot thousands, comma decimals, 2 decimals) */
+export function formatAmount(val: string | number | null | undefined): string {
+  if (val == null || val === '') return '—';
+  const n = typeof val === 'string' ? parseFloat(val) : val;
+  if (isNaN(n)) return String(val);
+  const sign = n < 0 ? '-' : '';
+  const absFixed = Math.abs(n).toFixed(2);
+  const [intPart, decPart] = absFixed.split('.');
+  const withDots = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${sign}${withDots},${decPart}`;
+}
+
 /** Format date as DD.MM.YYYY */
 export function formatDate(val: string | null | undefined): string {
   if (val == null || val === '') return '—';

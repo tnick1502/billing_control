@@ -114,7 +114,7 @@ export interface Device {
   created_at: string;
 }
 export interface DeviceCreate {
-  sku: string;
+  sku?: string | null;
   primary_name: string;
   model?: string | null;
   is_active?: boolean;
@@ -268,7 +268,7 @@ export interface Invoice {
   created_at: string;
 }
 export interface InvoiceCreate {
-  invoice_no: string;
+  invoice_no?: string | null;
   invoice_date: string;
   currency?: string;
   total_amount?: string | null;

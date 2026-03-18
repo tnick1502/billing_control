@@ -1,3 +1,4 @@
+import re
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,9 +26,23 @@ async def list_invoices(session: AsyncSession = Depends(get_db)):
     return result.scalars().all()
 
 
+async def _generate_invoice_no(session: AsyncSession) -> str:
+    """Generate next invoice number: INV-001, INV-002, ..."""
+    result = await session.execute(select(Invoice.invoice_no))
+    max_num = 0
+    for row in result.scalars().all():
+        m = re.match(r"INV-(\d+)", row.invoice_no or "", re.IGNORECASE)
+        if m:
+            max_num = max(max_num, int(m.group(1)))
+    return f"INV-{max_num + 1:03d}"
+
+
 @router.post("", response_model=InvoiceRead)
 async def create_invoice(data: InvoiceCreate, session: AsyncSession = Depends(get_db)):
-    invoice = Invoice(**data.model_dump())
+    dump = data.model_dump()
+    if not dump.get("invoice_no") or not str(dump["invoice_no"]).strip():
+        dump["invoice_no"] = await _generate_invoice_no(session)
+    invoice = Invoice(**dump)
     session.add(invoice)
     await session.flush()
     await session.refresh(invoice)
@@ -49,7 +64,9 @@ async def update_invoice(invoice_id: int, data: InvoiceUpdate, session: AsyncSes
     invoice = result.scalar_one_or_none()
     if not invoice:
         raise HTTPException(404, "Invoice not found")
-    for k, v in data.model_dump(exclude_unset=True).items():
+    update_data = data.model_dump(exclude_unset=True)
+    update_data.pop("invoice_no", None)  # invoice_no immutable
+    for k, v in update_data.items():
         setattr(invoice, k, v)
     await session.flush()
     await session.refresh(invoice)

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import { formatQty, formatDate } from '$lib/format';
+  import { formatQty, formatDate, formatAmount } from '$lib/format';
   import type { Invoice, InvoiceCreate, InvoicePartLink, InvoicePartLinkCreate, InvoiceFileInfo } from '$lib/api';
 
   let invoices: Invoice[] = [];
@@ -9,7 +9,7 @@
   let parts: { id: number; name: string }[] = [];
   let loading = true;
   let modalOpen = false;
-  let form: InvoiceCreate = { invoice_no: '', invoice_date: new Date().toISOString().slice(0, 10), currency: 'RUB', status: 'received' };
+  let form: InvoiceCreate = { invoice_date: new Date().toISOString().slice(0, 10), currency: 'RUB', status: 'received' };
   let editingId: number | null = null;
   let selectedInvoice: Invoice | null = null;
   let invoiceParts: InvoicePartLink[] = [];
@@ -38,14 +38,14 @@
 
   function openCreate() {
     editingId = null;
-    form = { invoice_no: '', invoice_date: new Date().toISOString().slice(0, 10), currency: 'RUB', status: 'received' };
+    form = { invoice_date: new Date().toISOString().slice(0, 10), currency: 'RUB', status: 'received' };
     if (createFileInput) createFileInput.value = '';
     modalOpen = true;
   }
 
   function openEdit(i: Invoice) {
     editingId = i.id;
-    form = { invoice_no: i.invoice_no, invoice_date: i.invoice_date, currency: i.currency, total_amount: i.total_amount, status: i.status, note: i.note };
+    form = { invoice_no: i.invoice_no, invoice_date: i.invoice_date, currency: i.currency ?? 'RUB', total_amount: i.total_amount, status: i.status, note: i.note };
     modalOpen = true;
   }
 
@@ -159,6 +159,7 @@
           <tr>
             <th class="px-4 py-3 font-medium">№ счёта</th>
             <th class="px-4 py-3 font-medium">Дата</th>
+            <th class="px-4 py-3 font-medium">Валюта</th>
             <th class="px-4 py-3 font-medium">Сумма</th>
             <th class="px-4 py-3 font-medium">Статус</th>
             <th class="px-4 py-3 w-32"></th>
@@ -169,7 +170,8 @@
             <tr class="hover:bg-zinc-800/50">
               <td class="px-4 py-3 font-mono">{i.invoice_no}</td>
               <td class="px-4 py-3">{formatDate(i.invoice_date)}</td>
-              <td class="px-4 py-3">{formatQty(i.total_amount)}</td>
+              <td class="px-4 py-3">{i.currency}</td>
+              <td class="px-4 py-3">{formatAmount(i.total_amount)}</td>
               <td class="px-4 py-3"><span class="px-2 py-0.5 rounded text-sm bg-zinc-700">{i.status}</span></td>
               <td class="px-4 py-3">
                 <button on:click={() => openInvoice(i)} class="text-emerald-500 hover:text-emerald-400 mr-2">Детали</button>
@@ -217,7 +219,7 @@
               <td class="px-3 py-2">{planLabel(lp.plan_id)}</td>
               <td class="px-3 py-2">{partName(lp.part_id)}</td>
               <td class="px-3 py-2 font-mono">{formatQty(lp.qty_covered)}</td>
-              <td class="px-3 py-2 font-mono">{formatQty(lp.amount_allocated)}</td>
+              <td class="px-3 py-2 font-mono">{formatAmount(lp.amount_allocated)}</td>
               <td>
                 <button on:click={() => removePart(lp.id)} class="text-red-400 text-sm">Удал.</button>
               </td>
@@ -235,13 +237,19 @@
     <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
       <h2 class="text-lg font-semibold text-white mb-4">{editingId ? 'Редактировать' : 'Новый счёт'}</h2>
       <form on:submit|preventDefault={save} class="space-y-4">
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">№ счёта</label>
-          <input bind:value={form.invoice_no} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
-        </div>
+        {#if editingId}
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">№ счёта</label>
+            <input bind:value={form.invoice_no} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" readonly />
+          </div>
+        {/if}
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Дата</label>
           <input type="date" bind:value={form.invoice_date} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
+        </div>
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Валюта</label>
+          <input bind:value={form.currency} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" placeholder="RUB" />
         </div>
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Сумма</label>
