@@ -17,6 +17,7 @@ _PG_STATEMENTS = [
     "ALTER TABLE parts ADD COLUMN IF NOT EXISTS description TEXT",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS description TEXT",
     "ALTER TABLE device_bom_versions ADD COLUMN IF NOT EXISTS description TEXT",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS description TEXT",
     "ALTER TABLE parts DROP COLUMN IF EXISTS uom",
 ]
 

@@ -9,7 +9,12 @@
   let parts: { id: number; name: string }[] = [];
   let loading = true;
   let modalOpen = false;
-  let form: InvoiceCreate = { invoice_date: new Date().toISOString().slice(0, 10), currency: 'RUB', status: 'received' };
+  let form: InvoiceCreate = {
+    invoice_date: new Date().toISOString().slice(0, 10),
+    currency: 'RUB',
+    status: 'received',
+    description: null,
+  };
   let editingId: number | null = null;
   let selectedInvoice: Invoice | null = null;
   let invoiceParts: InvoicePartLink[] = [];
@@ -38,14 +43,25 @@
 
   function openCreate() {
     editingId = null;
-    form = { invoice_date: new Date().toISOString().slice(0, 10), currency: 'RUB', status: 'received' };
+    form = {
+      invoice_date: new Date().toISOString().slice(0, 10),
+      currency: 'RUB',
+      status: 'received',
+      description: null,
+    };
     if (createFileInput) createFileInput.value = '';
     modalOpen = true;
   }
 
   function openEdit(i: Invoice) {
     editingId = i.id;
-    form = { invoice_no: i.invoice_no, invoice_date: i.invoice_date, currency: i.currency ?? 'RUB', total_amount: i.total_amount, status: i.status, note: i.note };
+    form = {
+      invoice_date: i.invoice_date,
+      currency: i.currency ?? 'RUB',
+      total_amount: i.total_amount,
+      status: i.status,
+      description: i.description ?? null,
+    };
     modalOpen = true;
   }
 
@@ -158,6 +174,7 @@
         <thead class="bg-surface-800 text-zinc-400 text-left">
           <tr>
             <th class="px-4 py-3 font-medium">№ счёта</th>
+            <th class="px-4 py-3 font-medium">Описание</th>
             <th class="px-4 py-3 font-medium">Дата</th>
             <th class="px-4 py-3 font-medium">Валюта</th>
             <th class="px-4 py-3 font-medium">Сумма</th>
@@ -168,7 +185,8 @@
         <tbody class="divide-y divide-zinc-800">
           {#each invoices as i}
             <tr class="hover:bg-zinc-800/50">
-              <td class="px-4 py-3 font-mono">{i.invoice_no}</td>
+              <td class="px-4 py-3 font-mono">{i.id}</td>
+              <td class="px-4 py-3 text-zinc-400 max-w-xs truncate">{i.description || '—'}</td>
               <td class="px-4 py-3">{formatDate(i.invoice_date)}</td>
               <td class="px-4 py-3">{i.currency}</td>
               <td class="px-4 py-3">{formatAmount(i.total_amount)}</td>
@@ -189,7 +207,7 @@
 {#if selectedInvoice}
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" on:click={() => selectedInvoice = null} role="button" tabindex="0">
     <div class="bg-surface-800 rounded-xl p-6 w-full max-w-2xl max-h-[80vh] overflow-auto border border-zinc-700" on:click|stopPropagation role="dialog">
-      <h2 class="text-lg font-semibold text-white mb-4">Счёт {selectedInvoice.invoice_no}</h2>
+      <h2 class="text-lg font-semibold text-white mb-4">Счёт №{selectedInvoice.id}</h2>
       <div class="mb-4">
         <h3 class="text-sm text-zinc-400 mb-2">Файлы счёта</h3>
         <div class="flex flex-wrap gap-2 items-center mb-2">
@@ -240,9 +258,18 @@
         {#if editingId}
           <div>
             <label class="block text-sm text-zinc-400 mb-1">№ счёта</label>
-            <input bind:value={form.invoice_no} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" readonly />
+            <input value={String(editingId)} readonly class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-zinc-400" />
           </div>
         {/if}
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Описание</label>
+          <textarea
+            bind:value={form.description}
+            rows="2"
+            placeholder="Опционально"
+            class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
+          ></textarea>
+        </div>
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Дата</label>
           <input type="date" bind:value={form.invoice_date} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />

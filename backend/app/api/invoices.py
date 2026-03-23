@@ -1,4 +1,6 @@
-import re
+import uuid
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,24 +28,30 @@ async def list_invoices(session: AsyncSession = Depends(get_db)):
     return result.scalars().all()
 
 
-async def _generate_invoice_no(session: AsyncSession) -> str:
-    """Generate next invoice number: INV-001, INV-002, ..."""
-    result = await session.execute(select(Invoice.invoice_no))
-    max_num = 0
-    for row in result.scalars().all():
-        m = re.match(r"INV-(\d+)", row.invoice_no or "", re.IGNORECASE)
-        if m:
-            max_num = max(max_num, int(m.group(1)))
-    return f"INV-{max_num + 1:03d}"
+def _clean_invoice_payload(d: dict) -> dict:
+    """Пустые строки из форм → None; invoice_no с клиента не используется."""
+    out = dict(d)
+    out.pop("invoice_no", None)
+    for key in ("total_amount", "note", "description"):
+        if out.get(key) == "":
+            out[key] = None
+    if out.get("total_amount") is not None:
+        try:
+            out["total_amount"] = Decimal(str(out["total_amount"]))
+        except Exception:
+            out["total_amount"] = None
+    return {k: v for k, v in out.items() if v is not None}
 
 
 @router.post("", response_model=InvoiceRead)
 async def create_invoice(data: InvoiceCreate, session: AsyncSession = Depends(get_db)):
-    dump = data.model_dump()
-    if not dump.get("invoice_no") or not str(dump.get("invoice_no") or "").strip():
-        dump["invoice_no"] = await _generate_invoice_no(session)
+    dump = _clean_invoice_payload(data.model_dump())
+    # Временный уникальный ключ под NOT NULL + uq (invoice_no, invoice_date)
+    dump["invoice_no"] = f"tmp-{uuid.uuid4().hex}"
     invoice = Invoice(**dump)
     session.add(invoice)
+    await session.flush()
+    invoice.invoice_no = str(invoice.id)
     await session.flush()
     await session.refresh(invoice)
     return invoice
@@ -66,6 +74,14 @@ async def update_invoice(invoice_id: int, data: InvoiceUpdate, session: AsyncSes
         raise HTTPException(404, "Invoice not found")
     update_data = data.model_dump(exclude_unset=True)
     update_data.pop("invoice_no", None)  # invoice_no immutable
+    for key in ("total_amount", "note", "description"):
+        if update_data.get(key) == "":
+            update_data[key] = None
+    if update_data.get("total_amount") is not None:
+        try:
+            update_data["total_amount"] = Decimal(str(update_data["total_amount"]))
+        except Exception:
+            update_data["total_amount"] = None
     for k, v in update_data.items():
         setattr(invoice, k, v)
     await session.flush()

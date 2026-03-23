@@ -7,8 +7,10 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/mrp_bom_orders"
 
-    # S3 / MinIO
+    # S3 / MinIO (endpoint — для сервера: в Docker часто http://minio:9000)
     s3_endpoint_url: str = "http://localhost:9000"
+    # URL в presigned-ссылках для браузера (иначе в ссылке будет minio → DNS NXDOMAIN)
+    s3_public_endpoint_url: str | None = None
     s3_access_key: str = "minioadmin"
     s3_secret_key: str = "minioadmin"
     s3_bucket: str = "invoices"

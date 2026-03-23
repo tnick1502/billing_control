@@ -23,6 +23,8 @@ docker compose up --build
 - создаётся bucket в MinIO
 - заполняется БД тестовыми данными
 
+**Скачивание файлов счетов:** бэкенд в Docker ходит в MinIO по `http://minio:9000`, а presigned-ссылка для браузера должна быть на доступный с хоста адрес. В `docker-compose` задано `S3_PUBLIC_ENDPOINT_URL=http://localhost:9000`. Если открываете UI не с `localhost`, подставьте свой хост и порт MinIO (например `http://192.168.1.5:9000`).
+
 ## Локальная разработка
 
 ### Backend

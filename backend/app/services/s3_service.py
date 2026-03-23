@@ -8,15 +8,26 @@ from botocore.config import Config
 from app.config import settings
 
 
-def get_s3_client():
+def _client(endpoint_url: str):
     return boto3.client(
         "s3",
-        endpoint_url=settings.s3_endpoint_url,
+        endpoint_url=endpoint_url,
         aws_access_key_id=settings.s3_access_key,
         aws_secret_access_key=settings.s3_secret_key,
         region_name=settings.s3_region,
         config=Config(signature_version="s3v4"),
     )
+
+
+def get_s3_client():
+    """Клиент для загрузки/удаления — тот же endpoint, что видит бэкенд."""
+    return _client(settings.s3_endpoint_url)
+
+
+def get_s3_client_for_presign():
+    """Клиент для presigned URL — хост должен открываться в браузере (localhost, не minio)."""
+    public_url = settings.s3_public_endpoint_url or settings.s3_endpoint_url
+    return _client(public_url)
 
 
 async def ensure_bucket_exists() -> None:
@@ -61,7 +72,7 @@ async def upload_file(
 
 
 def get_presigned_url(bucket: str, object_key: str, expires_in: int = 3600) -> str:
-    client = get_s3_client()
+    client = get_s3_client_for_presign()
     return client.generate_presigned_url(
         "get_object",
         Params={"Bucket": bucket, "Key": object_key},

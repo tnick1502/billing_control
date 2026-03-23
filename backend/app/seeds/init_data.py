@@ -114,9 +114,10 @@ async def seed_database(session: AsyncSession) -> bool:
     ])
 
     # Invoice
-    inv = Invoice(invoice_no="INV-001", invoice_date=date(2026, 3, 10), total_amount=Decimal("50000.00"), status="received")
+    inv = Invoice(invoice_no="tmp-seed", invoice_date=date(2026, 3, 10), total_amount=Decimal("50000.00"), status="received", description="Демо-счёт")
     session.add(inv)
     await session.flush()
+    inv.invoice_no = str(inv.id)
 
     session.add_all([
         InvoicePartLink(invoice_id=inv.id, plan_id=plan.id, part_id=p1.id, qty_covered=Decimal("38"), amount_allocated=Decimal("12000.00")),

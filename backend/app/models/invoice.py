@@ -15,6 +15,7 @@ class Invoice(Base):
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="RUB")
     total_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="received")
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 

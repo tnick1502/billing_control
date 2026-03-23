@@ -269,11 +269,12 @@ class MonthlyPlanPartRead(BaseModel):
 
 
 class InvoiceBase(BaseModel):
-    invoice_no: str | None = None  # Auto-generated if not provided
+    invoice_no: str | None = None  # Игнорируется при создании — подставляется str(id)
     invoice_date: date
     currency: str = "RUB"
     total_amount: Decimal | None = None
     status: str = "received"
+    description: str | None = None
     note: str | None = None
 
 
@@ -286,6 +287,7 @@ class InvoiceUpdate(BaseModel):
     currency: str | None = None
     total_amount: Decimal | None = None
     status: str | None = None
+    description: str | None = None
     note: str | None = None
 
 
@@ -296,6 +298,7 @@ class InvoiceRead(BaseModel):
     currency: str
     total_amount: Decimal | None
     status: str
+    description: str | None
     note: str | None
     created_at: datetime
 

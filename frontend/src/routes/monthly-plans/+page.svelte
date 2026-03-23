@@ -212,7 +212,7 @@
                       <td class="px-4 py-3">
                         {#if p.has_invoice}
                           <span class="text-emerald-400 font-mono text-sm">
-                            {(p.invoices ?? []).map((i) => i.invoice_no).join(', ')}
+                            {(p.invoices ?? []).map((i) => `№${i.invoice_id}`).join(', ')}
                           </span>
                         {:else}
                           <button
@@ -282,7 +282,7 @@
           <label class="block text-sm text-zinc-400 mb-1">Счёт</label>
           <select bind:value={linkInvoiceId} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required>
             {#each invoices as i}
-              <option value={i.id}>{i.invoice_no}</option>
+              <option value={i.id}>№{i.id}</option>
             {/each}
           </select>
         </div>

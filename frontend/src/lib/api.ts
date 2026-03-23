@@ -316,15 +316,16 @@ export interface Invoice {
   currency: string;
   total_amount: string | null;
   status: string;
+  description: string | null;
   note: string | null;
   created_at: string;
 }
 export interface InvoiceCreate {
-  invoice_no?: string | null;
   invoice_date: string;
   currency?: string;
   total_amount?: string | null;
   status?: string;
+  description?: string | null;
   note?: string | null;
 }
 export interface InvoicePartLink {
