@@ -84,7 +84,7 @@
         <tbody class="divide-y divide-zinc-800">
           {#each parts as p}
             <tr class="hover:bg-zinc-800/50">
-              <td class="px-4 py-3 font-mono text-sm">{p.id}</td>
+              <td class="px-4 py-3 font-mono text-sm">{p.id ?? '—'}</td>
               <td class="px-4 py-3">{p.name}</td>
               <td class="px-4 py-3 text-zinc-400">{p.uom}</td>
               <td class="px-4 py-3">{p.is_active ? 'Да' : 'Нет'}</td>

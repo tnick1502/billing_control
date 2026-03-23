@@ -87,6 +87,9 @@
   function partName(id: number) {
     return parts.find((p) => p.id === id)?.name ?? id;
   }
+  function partId(id: number) {
+    return parts.find((p) => p.id === id)?.id ?? id;
+  }
 
   function openLinkModal(planId: number, partIds: number[]) {
     if (invoices.length === 0) {
@@ -182,7 +185,7 @@
                 <tbody class="divide-y divide-zinc-800">
                   {#each data.devices as d}
                     <tr class="hover:bg-zinc-800/50">
-                      <td class="px-4 py-3 font-mono text-sm">{deviceId(d.device_id)}</td>
+                      <td class="px-4 py-3 font-mono text-sm">{deviceId(d.device_id) ?? '—'}</td>
                       <td class="px-4 py-3">{deviceName(d.device_id)}</td>
                       <td class="px-4 py-3 font-mono">{formatQty(d.qty_total)}</td>
                     </tr>
@@ -194,6 +197,7 @@
               <table class="w-full rounded-xl border border-zinc-700 overflow-hidden">
                 <thead class="bg-zinc-800 text-zinc-400 text-left">
                   <tr>
+                    <th class="px-4 py-3 font-medium">ID</th>
                     <th class="px-4 py-3 font-medium">Деталь</th>
                     <th class="px-4 py-3 font-medium">Требуется</th>
                     <th class="px-4 py-3 font-medium">Покрытие счётом</th>
@@ -202,6 +206,7 @@
                 <tbody class="divide-y divide-zinc-800">
                   {#each data.parts as p}
                     <tr class="{p.has_invoice ? 'bg-emerald-500/10' : 'bg-red-500/10'}">
+                      <td class="px-4 py-3 font-mono text-sm">{partId(p.part_id) ?? '—'}</td>
                       <td class="px-4 py-3">{partName(p.part_id)}</td>
                       <td class="px-4 py-3 font-mono">{formatQty(p.qty_required)}</td>
                       <td class="px-4 py-3">

@@ -84,7 +84,7 @@
         <tbody class="divide-y divide-zinc-800">
           {#each devices as d}
             <tr class="hover:bg-zinc-800/50">
-              <td class="px-4 py-3 font-mono text-sm">{d.id}</td>
+              <td class="px-4 py-3 font-mono text-sm">{d.id ?? '—'}</td>
               <td class="px-4 py-3">{d.primary_name}</td>
               <td class="px-4 py-3 text-zinc-400">{d.model || '—'}</td>
               <td class="px-4 py-3">{d.is_active ? 'Да' : 'Нет'}</td>

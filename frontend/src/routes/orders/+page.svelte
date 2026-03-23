@@ -225,7 +225,7 @@
         <tbody class="divide-y divide-zinc-800">
           {#each orders as o}
             <tr class="hover:bg-zinc-800/50">
-              <td class="px-4 py-3 font-mono">{o.id}</td>
+              <td class="px-4 py-3 font-mono">{o.id ?? '—'}</td>
               <td class="px-4 py-3">{formatDate(o.order_date)}</td>
               <td class="px-4 py-3"><span class="px-2 py-0.5 rounded text-sm bg-zinc-700">{o.status}</span></td>
               <td class="px-4 py-3">
