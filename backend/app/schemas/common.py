@@ -235,7 +235,7 @@ class MonthlyPlanRead(BaseModel):
 
 class MonthlyPlanGenerate(BaseModel):
     month: date
-    order_status: str | None = "confirmed"
+    order_status: str | None = None  # None = все заказы (draft, confirmed и т.д.)
     replace: bool = True  # Удалить существующий план за месяц и создать новый
 
 

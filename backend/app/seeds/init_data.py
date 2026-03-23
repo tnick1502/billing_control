@@ -55,10 +55,10 @@ async def seed_database(session: AsyncSession) -> bool:
     session.add_all([p1, p2, p3, p4, p5, p6, p7])
     await session.flush()
 
-    # BOM versions (active)
-    bom1 = DeviceBomVersion(device_id=d1.id, version=1, status="active")
-    bom2 = DeviceBomVersion(device_id=d2.id, version=1, status="active")
-    bom3 = DeviceBomVersion(device_id=d3.id, version=1, status="active")
+    # BOM versions (active) — по одному активному на прибор
+    bom1 = DeviceBomVersion(device_id=d1.id, name="Спецификация v1", version=1, status="active")
+    bom2 = DeviceBomVersion(device_id=d2.id, name="Спецификация v1", version=1, status="active")
+    bom3 = DeviceBomVersion(device_id=d3.id, name="Спецификация v1", version=1, status="active")
     session.add_all([bom1, bom2, bom3])
     await session.flush()
 
@@ -83,11 +83,12 @@ async def seed_database(session: AsyncSession) -> bool:
     session.add_all([o1, o2])
     await session.flush()
 
+    # Заказы со спецификациями (активная BOM на каждый прибор)
     session.add_all([
-        OrderItem(order_id=o1.id, device_id=d1.id, qty=Decimal("10"), price=Decimal("1500.00")),
-        OrderItem(order_id=o1.id, device_id=d2.id, qty=Decimal("5"), price=Decimal("800.00")),
-        OrderItem(order_id=o2.id, device_id=d1.id, qty=Decimal("20"), price=Decimal("1450.00")),
-        OrderItem(order_id=o2.id, device_id=d3.id, qty=Decimal("3"), price=Decimal("2200.00")),
+        OrderItem(order_id=o1.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("10"), price=Decimal("1500.00")),
+        OrderItem(order_id=o1.id, device_id=d2.id, bom_version_id=bom2.id, qty=Decimal("5"), price=Decimal("800.00")),
+        OrderItem(order_id=o2.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("20"), price=Decimal("1450.00")),
+        OrderItem(order_id=o2.id, device_id=d3.id, bom_version_id=bom3.id, qty=Decimal("3"), price=Decimal("2200.00")),
     ])
 
     # Monthly plan (March 2026)

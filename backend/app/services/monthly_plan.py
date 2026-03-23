@@ -12,7 +12,7 @@ from app.models import Order, OrderItem, OrderPartItem, DeviceBomVersion, Device
 async def generate_monthly_plan(
     session: AsyncSession,
     month: date,
-    order_status: str | None = "confirmed",
+    order_status: str | None = None,
     replace: bool = True,
 ) -> MonthlyPlan:
     """Generate monthly plan from orders for the given month."""
@@ -52,17 +52,25 @@ async def generate_monthly_plan(
         .options(selectinload(OrderItem.bom_version))
     )
     order_items = list(items_result.scalars().all())
-    bom_result = await session.execute(
+    active_bom_result = await session.execute(
         select(DeviceBomVersion).where(DeviceBomVersion.status == "active")
     )
-    bom_by_device = {b.device_id: b for b in bom_result.scalars().all()}
+    bom_by_device = {b.device_id: b for b in active_bom_result.scalars().all()}
+
+    all_boms_result = await session.execute(
+        select(DeviceBomVersion).order_by(DeviceBomVersion.device_id, DeviceBomVersion.version)
+    )
+    first_bom_by_device: dict[int, DeviceBomVersion] = {}
+    for b in all_boms_result.scalars().all():
+        if b.device_id not in first_bom_by_device:
+            first_bom_by_device[b.device_id] = b
 
     # Aggregate by (device_id, bom_version_id)
     device_bom_totals: dict[tuple[int, int], Decimal] = {}
     for oi in order_items:
-        bom = oi.bom_version if oi.bom_version_id else bom_by_device.get(oi.device_id)
+        bom = oi.bom_version if oi.bom_version_id else bom_by_device.get(oi.device_id) or first_bom_by_device.get(oi.device_id)
         if not bom:
-            raise ValueError(f"Device {oi.device_id} has no BOM (set bom_version_id on order item or active BOM on device)")
+            raise ValueError(f"Прибор {oi.device_id} не имеет спецификации. Создайте BOM для прибора или укажите спецификацию в позиции заказа.")
         key = (oi.device_id, bom.id)
         device_bom_totals[key] = device_bom_totals.get(key, Decimal("0")) + oi.qty
 
