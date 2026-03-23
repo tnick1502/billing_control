@@ -6,7 +6,7 @@
   let devices: Device[] = [];
   let loading = true;
   let modalOpen = false;
-  let form: DeviceCreate = { primary_name: '', model: '', is_active: true };
+  let form: DeviceCreate = { primary_name: '', model: '', description: null, is_active: true };
   let editingId: number | null = null;
 
   onMount(load);
@@ -24,13 +24,13 @@
 
   function openCreate() {
     editingId = null;
-    form = { primary_name: '', model: '', is_active: true };
+    form = { primary_name: '', model: '', description: null, is_active: true };
     modalOpen = true;
   }
 
   function openEdit(d: Device) {
     editingId = d.id;
-    form = { primary_name: d.primary_name, model: d.model ?? '', is_active: d.is_active };
+    form = { primary_name: d.primary_name, model: d.model ?? '', description: d.description ?? null, is_active: d.is_active };
     modalOpen = true;
   }
 
@@ -77,6 +77,7 @@
             <th class="px-4 py-3 font-medium">ID</th>
             <th class="px-4 py-3 font-medium">Название</th>
             <th class="px-4 py-3 font-medium">Модель</th>
+            <th class="px-4 py-3 font-medium">Описание</th>
             <th class="px-4 py-3 font-medium">Активен</th>
             <th class="px-4 py-3 w-24"></th>
           </tr>
@@ -87,6 +88,7 @@
               <td class="px-4 py-3 font-mono text-sm">{d.id ?? '—'}</td>
               <td class="px-4 py-3">{d.primary_name}</td>
               <td class="px-4 py-3 text-zinc-400">{d.model || '—'}</td>
+              <td class="px-4 py-3 text-zinc-400 max-w-xs truncate">{d.description || '—'}</td>
               <td class="px-4 py-3">{d.is_active ? 'Да' : 'Нет'}</td>
               <td class="px-4 py-3">
                 <button on:click={() => openEdit(d)} class="text-amber-500 hover:text-amber-400 mr-2">Изм.</button>
@@ -118,6 +120,10 @@
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Модель</label>
           <input bind:value={form.model} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        </div>
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Описание</label>
+          <textarea bind:value={form.description} rows="2" placeholder="Опционально" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
         </div>
         <div class="flex items-center gap-2">
           <input type="checkbox" bind:checked={form.is_active} id="active" />

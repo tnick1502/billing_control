@@ -32,9 +32,9 @@ async def seed_database(session: AsyncSession) -> bool:
         return False
 
     # Devices
-    d1 = Device(primary_name="Датчик температуры Т-100", model="T-100", is_active=True)
-    d2 = Device(primary_name="Реле контроля РК-5", model="RK-5", is_active=True)
-    d3 = Device(primary_name="Блок питания БП-12", model="BP-12", is_active=True)
+    d1 = Device(primary_name="Датчик температуры Т-100", model="T-100", description="Промышленный датчик температуры", is_active=True)
+    d2 = Device(primary_name="Реле контроля РК-5", model="RK-5", description="Реле контроля напряжения", is_active=True)
+    d3 = Device(primary_name="Блок питания БП-12", model="BP-12", description="Блок питания 12В", is_active=True)
     session.add_all([d1, d2, d3])
     await session.flush()
 
@@ -45,20 +45,20 @@ async def seed_database(session: AsyncSession) -> bool:
     ])
 
     # Parts
-    p1 = Part(name="Корпус пластиковый", uom="шт", is_active=True)
-    p2 = Part(name="Плата печатная", uom="шт", is_active=True)
-    p3 = Part(name="Резистор 10кОм", uom="шт", is_active=True)
-    p4 = Part(name="Конденсатор 100мкФ", uom="шт", is_active=True)
-    p5 = Part(name="Термопара", uom="шт", is_active=True)
-    p6 = Part(name="Катушка реле", uom="шт", is_active=True)
-    p7 = Part(name="Трансформатор 12В", uom="шт", is_active=True)
+    p1 = Part(name="Корпус пластиковый", description="Ударопрочный корпус", is_active=True)
+    p2 = Part(name="Плата печатная", description="Основная плата", is_active=True)
+    p3 = Part(name="Резистор 10кОм", description="Точность 1%", is_active=True)
+    p4 = Part(name="Конденсатор 100мкФ", description="Электролитический", is_active=True)
+    p5 = Part(name="Термопара", description="Тип K", is_active=True)
+    p6 = Part(name="Катушка реле", description="12В", is_active=True)
+    p7 = Part(name="Трансформатор 12В", description="Мощность 5Вт", is_active=True)
     session.add_all([p1, p2, p3, p4, p5, p6, p7])
     await session.flush()
 
     # BOM versions (active) — по одному активному на прибор
-    bom1 = DeviceBomVersion(device_id=d1.id, name="Спецификация v1", version=1, status="active")
-    bom2 = DeviceBomVersion(device_id=d2.id, name="Спецификация v1", version=1, status="active")
-    bom3 = DeviceBomVersion(device_id=d3.id, name="Спецификация v1", version=1, status="active")
+    bom1 = DeviceBomVersion(device_id=d1.id, name="Спецификация v1", description="Базовая конфигурация", version=1, status="active")
+    bom2 = DeviceBomVersion(device_id=d2.id, name="Спецификация v1", description="Стандартная комплектация", version=1, status="active")
+    bom3 = DeviceBomVersion(device_id=d3.id, name="Спецификация v1", description="Полный комплект", version=1, status="active")
     session.add_all([bom1, bom2, bom3])
     await session.flush()
 
@@ -78,8 +78,8 @@ async def seed_database(session: AsyncSession) -> bool:
     ])
 
     # Orders
-    o1 = Order(status="confirmed", order_date=date(2026, 3, 1))
-    o2 = Order(status="confirmed", order_date=date(2026, 3, 5))
+    o1 = Order(status="confirmed", order_date=date(2026, 3, 1), description="Заказ для производства")
+    o2 = Order(status="confirmed", order_date=date(2026, 3, 5), description="Дополнительная партия")
     session.add_all([o1, o2])
     await session.flush()
 

@@ -12,7 +12,7 @@
   let bomItems: BomItem[] = [];
   let loading = true;
   let bomModalOpen = false;
-  let bomForm: BomVersionCreate = { name: null, version: 1, status: 'draft' };
+  let bomForm: BomVersionCreate = { name: null, description: null, version: 1, status: 'draft' };
   let itemModalOpen = false;
   let itemForm: BomItemCreate = { part_id: 0, qty_per_device: '1', note: null };
   let editingItemId: number | null = null;
@@ -59,7 +59,7 @@
 
   function openCreateBom() {
     if (!selectedDevice) return;
-    bomForm = { name: null, version: boms.length + 1, status: 'draft' };
+    bomForm = { name: null, description: null, version: boms.length + 1, status: 'draft' };
     bomModalOpen = true;
   }
 
@@ -174,6 +174,9 @@
               {#if b.name}
                 <span class="text-white">{b.name}</span>
               {/if}
+              {#if b.description}
+                <span class="text-zinc-400 text-sm truncate max-w-[200px]" title={b.description}>{b.description}</span>
+              {/if}
               <span class="px-2 py-0.5 rounded text-sm {b.status === 'active' ? 'bg-emerald-600' : b.status === 'current' ? 'bg-amber-600' : 'bg-zinc-700'}">{statusLabel(b.status)}</span>
               <div class="flex gap-1 ml-auto" role="presentation" on:click|stopPropagation>
                 {#if b.status !== 'active'}
@@ -231,6 +234,10 @@
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Наименование</label>
           <input type="text" bind:value={bomForm.name} placeholder="Опционально (по умолчанию: Спецификация vN)" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        </div>
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Описание</label>
+          <textarea bind:value={bomForm.description} rows="2" placeholder="Опционально" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
         </div>
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Версия</label>

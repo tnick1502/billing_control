@@ -18,6 +18,7 @@ class BaseSchema(BaseModel):
 class DeviceBase(BaseModel):
     primary_name: str
     model: str | None = None
+    description: str | None = None
     is_active: bool = True
 
 
@@ -28,6 +29,7 @@ class DeviceCreate(DeviceBase):
 class DeviceUpdate(BaseModel):
     primary_name: str | None = None
     model: str | None = None
+    description: str | None = None
     is_active: bool | None = None
 
 
@@ -51,7 +53,7 @@ class DeviceAliasRead(BaseModel):
 
 class PartBase(BaseModel):
     name: str
-    uom: str
+    description: str | None = None
     is_active: bool = True
 
 
@@ -61,7 +63,7 @@ class PartCreate(PartBase):
 
 class PartUpdate(BaseModel):
     name: str | None = None
-    uom: str | None = None
+    description: str | None = None
     is_active: bool | None = None
 
 
@@ -75,6 +77,7 @@ class PartRead(PartBase):
 class OrderBase(BaseModel):
     status: str = "draft"
     order_date: date
+    description: str | None = None
 
 
 class OrderCreate(OrderBase):
@@ -84,6 +87,7 @@ class OrderCreate(OrderBase):
 class OrderUpdate(BaseModel):
     status: str | None = None
     order_date: date | None = None
+    description: str | None = None
 
 
 class OrderRead(OrderBase):
@@ -155,6 +159,7 @@ class OrderItemRead(BaseModel):
 
 class BomVersionBase(BaseModel):
     name: str | None = None
+    description: str | None = None
     version: int
     status: str = "draft"
 
@@ -165,6 +170,7 @@ class BomVersionCreate(BomVersionBase):
 
 class BomVersionUpdate(BaseModel):
     name: str | None = None
+    description: str | None = None
     status: str | None = None
 
 
@@ -172,6 +178,7 @@ class BomVersionRead(BaseModel):
     id: int
     device_id: int
     name: str | None
+    description: str | None = None
     version: int
     status: str
     valid_from: datetime

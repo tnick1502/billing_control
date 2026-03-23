@@ -9,7 +9,7 @@
   let parts: { id: number; name: string }[] = [];
   let loading = true;
   let modalOpen = false;
-  let form: OrderCreate = { status: 'draft', order_date: new Date().toISOString().slice(0, 10) };
+  let form: OrderCreate = { status: 'draft', order_date: new Date().toISOString().slice(0, 10), description: null };
   let editingId: number | null = null;
   let selectedOrder: Order | null = null;
   let orderItems: OrderItem[] = [];
@@ -41,13 +41,13 @@
 
   function openCreate() {
     editingId = null;
-    form = { status: 'draft', order_date: new Date().toISOString().slice(0, 10) };
+    form = { status: 'draft', order_date: new Date().toISOString().slice(0, 10), description: null };
     modalOpen = true;
   }
 
   function openEdit(o: Order) {
     editingId = o.id;
-    form = { status: o.status, order_date: o.order_date };
+    form = { status: o.status, order_date: o.order_date, description: o.description ?? null };
     modalOpen = true;
   }
 
@@ -238,6 +238,7 @@
             <th class="px-4 py-3 font-medium">ID</th>
             <th class="px-4 py-3 font-medium">Дата</th>
             <th class="px-4 py-3 font-medium">Статус</th>
+            <th class="px-4 py-3 font-medium">Описание</th>
             <th class="px-4 py-3 w-32"></th>
           </tr>
         </thead>
@@ -247,6 +248,7 @@
               <td class="px-4 py-3 font-mono">{o.id ?? '—'}</td>
               <td class="px-4 py-3">{formatDate(o.order_date)}</td>
               <td class="px-4 py-3"><span class="px-2 py-0.5 rounded text-sm bg-zinc-700">{o.status}</span></td>
+              <td class="px-4 py-3 text-zinc-400 max-w-xs truncate">{o.description || '—'}</td>
               <td class="px-4 py-3">
                 <button on:click={() => openItems(o)} class="text-emerald-500 hover:text-emerald-400 mr-2">Позиции</button>
                 <button on:click={() => openEdit(o)} class="text-amber-500 hover:text-amber-400 mr-2">Изм.</button>
@@ -344,6 +346,10 @@
           <label class="block text-sm text-zinc-400 mb-1">Статус</label>
           <input bind:value={form.status} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
         </div>
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Описание</label>
+          <textarea bind:value={form.description} rows="2" placeholder="Опционально" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        </div>
         <div class="flex gap-2 pt-2">
           <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Сохранить</button>
           <button type="button" on:click={() => modalOpen = false} class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600">Отмена</button>
@@ -393,7 +399,7 @@
         {/if}
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Кол-во</label>
-          <input type="number" step="0.001" bind:value={itemForm.qty} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
+          <input type="number" step="1" min="1" bind:value={itemForm.qty} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
         </div>
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Цена</label>
@@ -427,7 +433,7 @@
         </div>
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Кол-во</label>
-          <input type="number" step="0.001" bind:value={partItemForm.qty} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
+          <input type="number" step="1" min="1" bind:value={partItemForm.qty} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
         </div>
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Цена</label>

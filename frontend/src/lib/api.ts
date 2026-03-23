@@ -109,12 +109,14 @@ export interface Device {
   id: number;
   primary_name: string;
   model: string | null;
+  description: string | null;
   is_active: boolean;
   created_at: string;
 }
 export interface DeviceCreate {
   primary_name: string;
   model?: string | null;
+  description?: string | null;
   is_active?: boolean;
 }
 export interface DeviceAlias {
@@ -127,13 +129,13 @@ export interface DeviceAlias {
 export interface Part {
   id: number;
   name: string;
-  uom: string;
+  description: string | null;
   is_active: boolean;
   created_at: string;
 }
 export interface PartCreate {
   name: string;
-  uom: string;
+  description?: string | null;
   is_active?: boolean;
 }
 
@@ -141,11 +143,13 @@ export interface Order {
   id: number;
   status: string;
   order_date: string;
+  description: string | null;
   created_at: string;
 }
 export interface OrderCreate {
   status?: string;
   order_date: string;
+  description?: string | null;
 }
 export interface BomVersionBrief {
   id: number;
@@ -189,6 +193,7 @@ export interface BomVersion {
   id: number;
   device_id: number;
   name: string | null;
+  description: string | null;
   version: number;
   status: string;
   valid_from: string;
@@ -197,6 +202,7 @@ export interface BomVersion {
 }
 export interface BomVersionCreate {
   name?: string | null;
+  description?: string | null;
   version: number;
   status?: string;
 }

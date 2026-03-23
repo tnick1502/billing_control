@@ -6,7 +6,7 @@
   let parts: Part[] = [];
   let loading = true;
   let modalOpen = false;
-  let form: PartCreate = { name: '', uom: 'шт', is_active: true };
+  let form: PartCreate = { name: '', description: null, is_active: true };
   let editingId: number | null = null;
 
   onMount(load);
@@ -24,13 +24,13 @@
 
   function openCreate() {
     editingId = null;
-    form = { name: '', uom: 'шт', is_active: true };
+    form = { name: '', description: null, is_active: true };
     modalOpen = true;
   }
 
   function openEdit(p: Part) {
     editingId = p.id;
-    form = { name: p.name, uom: p.uom, is_active: p.is_active };
+    form = { name: p.name, description: p.description ?? null, is_active: p.is_active };
     modalOpen = true;
   }
 
@@ -76,7 +76,7 @@
           <tr>
             <th class="px-4 py-3 font-medium">ID</th>
             <th class="px-4 py-3 font-medium">Название</th>
-            <th class="px-4 py-3 font-medium">Ед. изм.</th>
+            <th class="px-4 py-3 font-medium">Описание</th>
             <th class="px-4 py-3 font-medium">Активна</th>
             <th class="px-4 py-3 w-24"></th>
           </tr>
@@ -86,7 +86,7 @@
             <tr class="hover:bg-zinc-800/50">
               <td class="px-4 py-3 font-mono text-sm">{p.id ?? '—'}</td>
               <td class="px-4 py-3">{p.name}</td>
-              <td class="px-4 py-3 text-zinc-400">{p.uom}</td>
+              <td class="px-4 py-3 text-zinc-400 max-w-xs truncate">{p.description || '—'}</td>
               <td class="px-4 py-3">{p.is_active ? 'Да' : 'Нет'}</td>
               <td class="px-4 py-3">
                 <button on:click={() => openEdit(p)} class="text-amber-500 hover:text-amber-400 mr-2">Изм.</button>
@@ -116,8 +116,8 @@
           <input bind:value={form.name} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
         </div>
         <div>
-          <label class="block text-sm text-zinc-400 mb-1">Ед. изм.</label>
-          <input bind:value={form.uom} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
+          <label class="block text-sm text-zinc-400 mb-1">Описание</label>
+          <textarea bind:value={form.description} rows="2" placeholder="Опционально" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
         </div>
         <div class="flex items-center gap-2">
           <input type="checkbox" bind:checked={form.is_active} id="active" />
