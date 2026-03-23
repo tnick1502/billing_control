@@ -52,10 +52,16 @@ async def generate_monthly_plan(
         .options(selectinload(OrderItem.bom_version))
     )
     order_items = list(items_result.scalars().all())
-    active_bom_result = await session.execute(
+    active_result = await session.execute(
         select(DeviceBomVersion).where(DeviceBomVersion.status == "active")
     )
-    bom_by_device = {b.device_id: b for b in active_bom_result.scalars().all()}
+    bom_by_device = {b.device_id: b for b in active_result.scalars().all()}
+    current_result = await session.execute(
+        select(DeviceBomVersion).where(DeviceBomVersion.status == "current")
+    )
+    for b in current_result.scalars().all():
+        if b.device_id not in bom_by_device:
+            bom_by_device[b.device_id] = b
 
     all_boms_result = await session.execute(
         select(DeviceBomVersion).order_by(DeviceBomVersion.device_id, DeviceBomVersion.version)

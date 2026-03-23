@@ -81,16 +81,18 @@ async def list_order_items(order_id: int, session: AsyncSession = Depends(get_db
 async def create_order_item(order_id: int, data: OrderItemCreate, session: AsyncSession = Depends(get_db)):
     dump = data.model_dump()
     if not dump.get("bom_version_id"):
-        # Default: active BOM for device
-        bom_result = await session.execute(
-            select(DeviceBomVersion).where(
-                DeviceBomVersion.device_id == dump["device_id"],
-                DeviceBomVersion.status == "active",
+        # Default: active or current BOM for device
+        for status in ("active", "current"):
+            bom_result = await session.execute(
+                select(DeviceBomVersion).where(
+                    DeviceBomVersion.device_id == dump["device_id"],
+                    DeviceBomVersion.status == status,
+                )
             )
-        )
-        bom = bom_result.scalar_one_or_none()
-        if bom:
-            dump["bom_version_id"] = bom.id
+            bom = bom_result.scalar_one_or_none()
+            if bom:
+                dump["bom_version_id"] = bom.id
+                break
     item = OrderItem(order_id=order_id, **dump)
     session.add(item)
     await session.flush()

@@ -85,6 +85,16 @@ async def update_bom(bom_id: int, data: BomVersionUpdate, session: AsyncSession 
             .where(DeviceBomVersion.device_id == bom.device_id, DeviceBomVersion.id != bom_id)
             .values(status="archived")
         )
+    elif dump.get("status") == "current":
+        await session.execute(
+            update(DeviceBomVersion)
+            .where(
+                DeviceBomVersion.device_id == bom.device_id,
+                DeviceBomVersion.id != bom_id,
+                DeviceBomVersion.status == "current",
+            )
+            .values(status="archived")
+        )
     for k, v in dump.items():
         setattr(bom, k, v)
     await session.flush()

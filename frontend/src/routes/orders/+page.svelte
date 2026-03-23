@@ -122,6 +122,16 @@
     }
   }
 
+  const BOM_STATUS_LABELS: Record<string, string> = {
+    active: 'Активная',
+    current: 'Текущая',
+    archived: 'Архив',
+    draft: 'Черновик',
+  };
+  function bomStatusLabel(s: string) {
+    return BOM_STATUS_LABELS[s] ?? s;
+  }
+
   function handleDeviceChangeInItem(e: Event) {
     const el = e.currentTarget;
     if (el instanceof HTMLSelectElement) {
@@ -362,7 +372,7 @@
             >
               {#each bomsForDevice as b}
                 <option value={b.id}>
-                  {b.name || `v${b.version}`} ({b.status})
+                  {b.name || `v${b.version}`} ({bomStatusLabel(b.status)})
                 </option>
               {/each}
             </select>

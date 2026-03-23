@@ -12,7 +12,7 @@
   let bomItems: BomItem[] = [];
   let loading = true;
   let bomModalOpen = false;
-  let bomForm: BomVersionCreate = { version: 1, status: 'draft' };
+  let bomForm: BomVersionCreate = { name: null, version: 1, status: 'draft' };
   let itemModalOpen = false;
   let itemForm: BomItemCreate = { part_id: 0, qty_per_device: '1', note: null };
   let editingItemId: number | null = null;
@@ -38,7 +38,7 @@
     bomItems = [];
     try {
       boms = await api.bom.list(d.id);
-      const activeBom = boms.find((b) => b.status === 'active') ?? boms[0];
+      const activeBom = boms.find((b) => b.status === 'active') ?? boms.find((b) => b.status === 'current') ?? boms[0];
       if (activeBom) {
         selectedBom = activeBom;
         bomItems = await api.bom.items.list(activeBom.id);
@@ -59,7 +59,7 @@
 
   function openCreateBom() {
     if (!selectedDevice) return;
-    bomForm = { name: null, version: (boms.length + 1), status: 'draft' };
+    bomForm = { name: null, version: boms.length + 1, status: 'draft' };
     bomModalOpen = true;
   }
 
@@ -125,6 +125,16 @@
   function partName(id: number) {
     return parts.find((p) => p.id === id)?.name ?? id;
   }
+
+  const BOM_STATUSES: { value: string; label: string }[] = [
+    { value: 'active', label: 'Активная' },
+    { value: 'current', label: 'Текущая' },
+    { value: 'archived', label: 'Архив' },
+    { value: 'draft', label: 'Черновик' },
+  ];
+  function statusLabel(s: string) {
+    return BOM_STATUSES.find((x) => x.value === s)?.label ?? s;
+  }
 </script>
 
 <div class="p-8">
@@ -153,19 +163,30 @@
         </div>
         <div class="space-y-2 mb-4">
           {#each boms as b}
-            <button
+            <div
+              role="button"
+              tabindex="0"
               on:click={() => selectBom(b)}
-              class="w-full flex items-center gap-4 p-3 bg-surface-800 rounded-lg border text-left {selectedBom?.id === b.id ? 'border-amber-500' : 'border-zinc-700'}"
+              on:keydown={(e) => e.key === 'Enter' && selectBom(b)}
+              class="w-full flex items-center gap-4 p-3 bg-surface-800 rounded-lg border text-left cursor-pointer {selectedBom?.id === b.id ? 'border-amber-500' : 'border-zinc-700'}"
             >
               <span class="font-mono">v{b.version}</span>
               {#if b.name}
                 <span class="text-white">{b.name}</span>
               {/if}
-              <span class="px-2 py-0.5 rounded text-sm bg-zinc-700">{b.status}</span>
-              {#if b.status === 'draft'}
-                <button on:click={(e) => { e.stopPropagation(); setBomStatus(b.id, 'active'); }} class="text-emerald-500 text-sm">Активировать</button>
-              {/if}
-            </button>
+              <span class="px-2 py-0.5 rounded text-sm {b.status === 'active' ? 'bg-emerald-600' : b.status === 'current' ? 'bg-amber-600' : 'bg-zinc-700'}">{statusLabel(b.status)}</span>
+              <div class="flex gap-1 ml-auto" role="presentation" on:click|stopPropagation>
+                {#if b.status !== 'active'}
+                  <button on:click={() => setBomStatus(b.id, 'active')} class="text-emerald-500 text-sm px-2">Активная</button>
+                {/if}
+                {#if b.status !== 'current'}
+                  <button on:click={() => setBomStatus(b.id, 'current')} class="text-amber-400 text-sm px-2">Текущая</button>
+                {/if}
+                {#if b.status !== 'archived'}
+                  <button on:click={() => setBomStatus(b.id, 'archived')} class="text-zinc-400 text-sm px-2">В архив</button>
+                {/if}
+              </div>
+            </div>
           {/each}
         </div>
 
@@ -217,7 +238,11 @@
         </div>
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Статус</label>
-          <input bind:value={bomForm.status} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+          <select bind:value={bomForm.status} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white">
+            {#each BOM_STATUSES as s}
+              <option value={s.value}>{s.label}</option>
+            {/each}
+          </select>
         </div>
         <div class="flex gap-2 pt-2">
           <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Создать</button>
