@@ -29,6 +29,8 @@
 
   async function load() {
     loading = true;
+    /** Новый Map — иначе в Svelte 4 мутация plansData.set() не обновляет разметку */
+    const nextPlansData = new Map<number, { devices: MonthlyPlanDevice[]; parts: MonthlyPlanPartWithCoverage[] }>();
     try {
       plans = await api.monthlyPlans.list();
       const [devs, pts, invs] = await Promise.all([
@@ -45,10 +47,12 @@
           api.monthlyPlans.devices(p.id),
           api.monthlyPlans.partsWithCoverage(p.id),
         ]);
-        plansData.set(p.id, { devices: devsList, parts: partsList });
+        nextPlansData.set(p.id, { devices: devsList, parts: partsList });
       }
+      plansData = nextPlansData;
     } catch (e) {
       console.error(e);
+      plansData = new Map();
     } finally {
       loading = false;
     }
@@ -171,7 +175,7 @@
           </div>
 
           {#if data}
-            {@const uncovered = data.parts.filter((p) => !p.has_invoice)}
+            {@const uncovered = (data.parts ?? []).filter((p) => !p.has_invoice)}
             <div class="p-6">
               <h3 class="text-sm font-medium text-zinc-400 mb-2">Приборы</h3>
               <table class="w-full mb-6 rounded-xl border border-zinc-700 overflow-hidden">
@@ -183,7 +187,7 @@
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-zinc-800">
-                  {#each data.devices as d}
+                  {#each data.devices ?? [] as d}
                     <tr class="hover:bg-zinc-800/50">
                       <td class="px-4 py-3 font-mono text-sm">{deviceId(d.device_id) ?? '—'}</td>
                       <td class="px-4 py-3">{deviceName(d.device_id)}</td>
@@ -204,7 +208,7 @@
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-zinc-800">
-                  {#each data.parts as p}
+                  {#each data.parts ?? [] as p}
                     <tr class="{p.has_invoice ? 'bg-emerald-500/10' : 'bg-red-500/10'}">
                       <td class="px-4 py-3 font-mono text-sm">{partId(p.part_id) ?? '—'}</td>
                       <td class="px-4 py-3">{partName(p.part_id)}</td>
