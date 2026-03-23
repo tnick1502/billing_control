@@ -25,6 +25,7 @@ class OrderItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), nullable=False)
     device_id: Mapped[int] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), nullable=False)
+    bom_version_id: Mapped[int | None] = mapped_column(ForeignKey("device_bom_versions.id", ondelete="SET NULL"), nullable=True)
     qty: Mapped[Decimal] = mapped_column(Numeric(18, 3), nullable=False)
     price: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -33,3 +34,4 @@ class OrderItem(Base):
 
     order: Mapped["Order"] = relationship("Order", back_populates="items")
     device: Mapped["Device"] = relationship("Device", foreign_keys=[device_id])
+    bom_version: Mapped["DeviceBomVersion | None"] = relationship("DeviceBomVersion", foreign_keys=[bom_version_id])

@@ -2,8 +2,9 @@ from calendar import monthrange
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models import Order, OrderItem, OrderPartItem, DeviceBomVersion, DeviceBomItem, MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPart
 
@@ -44,13 +45,26 @@ async def generate_monthly_plan(
         await session.flush()
         return plan
 
-    # Aggregate order_items by device_id
+    # Get order items with resolved BOM (use bom_version_id if set, else active BOM for device)
     items_result = await session.execute(
-        select(OrderItem.device_id, func.sum(OrderItem.qty).label("qty_total"))
+        select(OrderItem)
         .where(OrderItem.order_id.in_(order_ids))
-        .group_by(OrderItem.device_id)
+        .options(selectinload(OrderItem.bom_version))
     )
-    device_totals = {row.device_id: row.qty_total for row in items_result}
+    order_items = list(items_result.scalars().all())
+    bom_result = await session.execute(
+        select(DeviceBomVersion).where(DeviceBomVersion.status == "active")
+    )
+    bom_by_device = {b.device_id: b for b in bom_result.scalars().all()}
+
+    # Aggregate by (device_id, bom_version_id)
+    device_bom_totals: dict[tuple[int, int], Decimal] = {}
+    for oi in order_items:
+        bom = oi.bom_version if oi.bom_version_id else bom_by_device.get(oi.device_id)
+        if not bom:
+            raise ValueError(f"Device {oi.device_id} has no BOM (set bom_version_id on order item or active BOM on device)")
+        key = (oi.device_id, bom.id)
+        device_bom_totals[key] = device_bom_totals.get(key, Decimal("0")) + oi.qty
 
     # Aggregate order_part_items (direct part orders)
     part_items_result = await session.execute(
@@ -60,44 +74,25 @@ async def generate_monthly_plan(
     )
     direct_part_totals = {row.part_id: row.qty_total for row in part_items_result}
 
-    # Get active BOM for each device
-    device_ids = list(device_totals.keys())
-    bom_result = await session.execute(
-        select(DeviceBomVersion)
-        .where(
-            DeviceBomVersion.device_id.in_(device_ids),
-            DeviceBomVersion.status == "active",
-        )
-    )
-    bom_by_device = {b.device_id: b for b in bom_result.scalars().all()}
-
-    # Check for devices without active BOM (only if we have device orders)
-    if device_ids:
-        missing = [d for d in device_ids if d not in bom_by_device]
-        if missing:
-            raise ValueError(f"Devices without active BOM: {missing}")
-
     # Create plan (revision 1 when replacing)
     revision = 1 if replace else await get_next_revision(session, month)
     plan = MonthlyPlan(month=first_day, revision=revision, status="draft", generated_by="api")
     session.add(plan)
     await session.flush()
 
-    # Create monthly_plan_devices
+    # Create monthly_plan_devices and aggregate parts
     part_totals: dict[int, Decimal] = {}
-    for device_id, qty_total in device_totals.items():
-        bom = bom_by_device[device_id]
+    for (device_id, bom_id), qty_total in device_bom_totals.items():
         session.add(
             MonthlyPlanDevice(
                 plan_id=plan.id,
                 device_id=device_id,
                 qty_total=qty_total,
-                bom_version_id=bom.id,
+                bom_version_id=bom_id,
             )
         )
-        # Aggregate parts from BOM
         bom_items_result = await session.execute(
-            select(DeviceBomItem).where(DeviceBomItem.bom_version_id == bom.id)
+            select(DeviceBomItem).where(DeviceBomItem.bom_version_id == bom_id)
         )
         for item in bom_items_result.scalars().all():
             qty = item.qty_per_device * qty_total

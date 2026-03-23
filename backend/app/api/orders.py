@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models import Order, OrderItem, OrderPartItem
+from app.models import Order, OrderItem, OrderPartItem, DeviceBomVersion
 from app.schemas.common import (
     OrderCreate,
     OrderRead,
@@ -68,17 +69,37 @@ async def delete_order(order_id: int, session: AsyncSession = Depends(get_db)):
 
 @router.get("/{order_id}/items", response_model=list[OrderItemRead])
 async def list_order_items(order_id: int, session: AsyncSession = Depends(get_db)):
-    result = await session.execute(select(OrderItem).where(OrderItem.order_id == order_id))
+    result = await session.execute(
+        select(OrderItem)
+        .where(OrderItem.order_id == order_id)
+        .options(selectinload(OrderItem.bom_version))
+    )
     return result.scalars().all()
 
 
 @router.post("/{order_id}/items", response_model=OrderItemRead)
 async def create_order_item(order_id: int, data: OrderItemCreate, session: AsyncSession = Depends(get_db)):
-    item = OrderItem(order_id=order_id, **data.model_dump())
+    dump = data.model_dump()
+    if not dump.get("bom_version_id"):
+        # Default: active BOM for device
+        bom_result = await session.execute(
+            select(DeviceBomVersion).where(
+                DeviceBomVersion.device_id == dump["device_id"],
+                DeviceBomVersion.status == "active",
+            )
+        )
+        bom = bom_result.scalar_one_or_none()
+        if bom:
+            dump["bom_version_id"] = bom.id
+    item = OrderItem(order_id=order_id, **dump)
     session.add(item)
     await session.flush()
-    await session.refresh(item)
-    return item
+    result = await session.execute(
+        select(OrderItem)
+        .where(OrderItem.id == item.id)
+        .options(selectinload(OrderItem.bom_version))
+    )
+    return result.scalar_one()
 
 
 @router.patch("/{order_id}/items/{item_id}", response_model=OrderItemRead)
@@ -92,8 +113,12 @@ async def update_order_item(order_id: int, item_id: int, data: OrderItemUpdate, 
     for k, v in data.model_dump(exclude_unset=True).items():
         setattr(item, k, v)
     await session.flush()
-    await session.refresh(item)
-    return item
+    result = await session.execute(
+        select(OrderItem)
+        .where(OrderItem.id == item.id)
+        .options(selectinload(OrderItem.bom_version))
+    )
+    return result.scalar_one()
 
 
 @router.delete("/{order_id}/items/{item_id}", status_code=204)

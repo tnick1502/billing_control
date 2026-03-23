@@ -59,7 +59,7 @@
 
   function openCreateBom() {
     if (!selectedDevice) return;
-    bomForm = { version: (boms.length + 1), status: 'draft' };
+    bomForm = { name: null, version: (boms.length + 1), status: 'draft' };
     bomModalOpen = true;
   }
 
@@ -158,6 +158,9 @@
               class="w-full flex items-center gap-4 p-3 bg-surface-800 rounded-lg border text-left {selectedBom?.id === b.id ? 'border-amber-500' : 'border-zinc-700'}"
             >
               <span class="font-mono">v{b.version}</span>
+              {#if b.name}
+                <span class="text-white">{b.name}</span>
+              {/if}
               <span class="px-2 py-0.5 rounded text-sm bg-zinc-700">{b.status}</span>
               {#if b.status === 'draft'}
                 <button on:click={(e) => { e.stopPropagation(); setBomStatus(b.id, 'active'); }} class="text-emerald-500 text-sm">Активировать</button>
@@ -204,6 +207,10 @@
     <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
       <h2 class="text-lg font-semibold text-white mb-4">Новая версия BOM</h2>
       <form on:submit|preventDefault={saveBom} class="space-y-4">
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Наименование</label>
+          <input type="text" bind:value={bomForm.name} placeholder="Опционально (по умолчанию: Спецификация vN)" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        </div>
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Версия</label>
           <input type="number" bind:value={bomForm.version} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />

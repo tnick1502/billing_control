@@ -153,10 +153,18 @@ export interface OrderCreate {
   status?: string;
   order_date: string;
 }
+export interface BomVersionBrief {
+  id: number;
+  name: string | null;
+  version: number;
+}
+
 export interface OrderItem {
   id: number;
   order_id: number;
   device_id: number;
+  bom_version_id: number | null;
+  bom_version: BomVersionBrief | null;
   qty: string;
   price: string | null;
   note: string | null;
@@ -177,6 +185,7 @@ export interface OrderPartItemCreate {
 }
 export interface OrderItemCreate {
   device_id: number;
+  bom_version_id?: number | null;
   qty: string;
   price?: string | null;
   note?: string | null;
@@ -185,6 +194,7 @@ export interface OrderItemCreate {
 export interface BomVersion {
   id: number;
   device_id: number;
+  name: string | null;
   version: number;
   status: string;
   valid_from: string;
@@ -192,6 +202,7 @@ export interface BomVersion {
   created_at: string;
 }
 export interface BomVersionCreate {
+  name?: string | null;
   version: number;
   status?: string;
 }

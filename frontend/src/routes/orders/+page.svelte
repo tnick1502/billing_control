@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import { formatQty, formatDate } from '$lib/format';
-  import type { Order, OrderCreate, OrderItem, OrderItemCreate, OrderPartItem, OrderPartItemCreate } from '$lib/api';
+  import type { Order, OrderCreate, OrderItem, OrderItemCreate, OrderPartItem, OrderPartItemCreate, BomVersion } from '$lib/api';
 
   let orders: Order[] = [];
   let devices: { id: number; primary_name: string }[] = [];
@@ -15,7 +15,8 @@
   let orderItems: OrderItem[] = [];
   let orderPartItems: OrderPartItem[] = [];
   let itemModalOpen = false;
-  let itemForm: OrderItemCreate = { device_id: 0, qty: '1', price: null, note: null };
+  let itemForm: OrderItemCreate = { device_id: 0, bom_version_id: null, qty: '1', price: null, note: null };
+  let bomsForDevice: BomVersion[] = [];
   let editingItemId: number | null = null;
   let partItemModalOpen = false;
   let partItemForm: OrderPartItemCreate = { part_id: 0, qty: '1', price: null, note: null };
@@ -79,17 +80,39 @@
     orderPartItems = await api.orders.partItems.list(o.id);
   }
 
-  function openAddItem() {
+  async function openAddItem() {
     if (!selectedOrder) return;
     editingItemId = null;
-    itemForm = { device_id: devices[0]?.id ?? 0, qty: '1', price: null, note: null };
+    itemForm = { device_id: devices[0]?.id ?? 0, bom_version_id: null, qty: '1', price: null, note: null };
     itemModalOpen = true;
+    await loadBomsForItemDevice();
   }
 
-  function openEditItem(item: OrderItem) {
+  async function openEditItem(item: OrderItem) {
     editingItemId = item.id;
-    itemForm = { device_id: item.device_id, qty: item.qty, price: item.price, note: item.note };
+    itemForm = { device_id: item.device_id, bom_version_id: item.bom_version_id ?? null, qty: item.qty, price: item.price, note: item.note };
     itemModalOpen = true;
+    await loadBomsForItemDevice();
+  }
+
+  async function loadBomsForItemDevice() {
+    if (!itemForm.device_id) {
+      bomsForDevice = [];
+      return;
+    }
+    try {
+      bomsForDevice = await api.bom.list(itemForm.device_id);
+      if (!itemForm.bom_version_id && bomsForDevice.length > 0) {
+        const active = bomsForDevice.find((b) => b.status === 'active') ?? bomsForDevice[0];
+        itemForm = { ...itemForm, bom_version_id: active.id };
+      }
+    } catch {
+      bomsForDevice = [];
+    }
+  }
+
+  async function onDeviceChangeInItem() {
+    await loadBomsForItemDevice();
   }
 
   async function saveItem() {
@@ -216,6 +239,7 @@
         <thead class="text-zinc-400 text-left text-sm">
           <tr>
             <th class="px-3 py-2">Прибор</th>
+            <th class="px-3 py-2">Спецификация</th>
             <th class="px-3 py-2">Кол-во</th>
             <th class="px-3 py-2">Цена</th>
             <th></th>
@@ -225,6 +249,9 @@
           {#each orderItems as i}
             <tr>
               <td class="px-3 py-2">{deviceName(i.device_id)}</td>
+              <td class="px-3 py-2 text-zinc-400">
+                {i.bom_version ? (i.bom_version.name || `v${i.bom_version.version}`) : '—'}
+              </td>
               <td class="px-3 py-2 font-mono">{formatQty(i.qty)}</td>
               <td class="px-3 py-2">{formatQty(i.price)}</td>
               <td>
@@ -297,12 +324,35 @@
       <form on:submit|preventDefault={saveItem} class="space-y-4">
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Прибор</label>
-          <select bind:value={itemForm.device_id} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required>
+          <select
+            value={itemForm.device_id}
+            on:change={(e) => {
+              itemForm.device_id = Number((e.target as HTMLSelectElement).value);
+              onDeviceChangeInItem();
+            }}
+            class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
+            required
+          >
             {#each devices as d}
               <option value={d.id}>{d.primary_name}</option>
             {/each}
           </select>
         </div>
+        {#if bomsForDevice.length > 0}
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">Спецификация</label>
+            <select
+              bind:value={itemForm.bom_version_id}
+              class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
+            >
+              {#each bomsForDevice as b}
+                <option value={b.id}>
+                  {b.name || `v${b.version}`} ({b.status})
+                </option>
+              {/each}
+            </select>
+          </div>
+        {/if}
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Кол-во</label>
           <input type="number" step="0.001" bind:value={itemForm.qty} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />

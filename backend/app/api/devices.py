@@ -36,8 +36,10 @@ async def _generate_device_sku(session: AsyncSession) -> str:
 @router.post("", response_model=DeviceRead)
 async def create_device(data: DeviceCreate, session: AsyncSession = Depends(get_db)):
     dump = data.model_dump()
-    if not dump.get("sku") or not str(dump["sku"]).strip():
+    if not dump.get("sku") or not str(dump.get("sku") or "").strip():
         dump["sku"] = await _generate_device_sku(session)
+    if dump.get("model") == "":
+        dump["model"] = None
     device = Device(**dump)
     session.add(device)
     await session.flush()

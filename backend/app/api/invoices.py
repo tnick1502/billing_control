@@ -15,7 +15,7 @@ from app.schemas.common import (
     InvoicePartLinkUpdate,
     FileRead,
 )
-from app.services.s3_service import upload_file, ensure_bucket_exists
+from app.services.s3_service import upload_file, ensure_bucket_exists, get_presigned_url
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
@@ -40,7 +40,7 @@ async def _generate_invoice_no(session: AsyncSession) -> str:
 @router.post("", response_model=InvoiceRead)
 async def create_invoice(data: InvoiceCreate, session: AsyncSession = Depends(get_db)):
     dump = data.model_dump()
-    if not dump.get("invoice_no") or not str(dump["invoice_no"]).strip():
+    if not dump.get("invoice_no") or not str(dump.get("invoice_no") or "").strip():
         dump["invoice_no"] = await _generate_invoice_no(session)
     invoice = Invoice(**dump)
     session.add(invoice)

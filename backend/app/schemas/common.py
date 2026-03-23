@@ -99,12 +99,14 @@ class OrderRead(OrderBase):
 
 class OrderItemCreate(BaseModel):
     device_id: int
+    bom_version_id: int | None = None  # Default: active BOM for device
     qty: Decimal
     price: Decimal | None = None
     note: str | None = None
 
 
 class OrderItemUpdate(BaseModel):
+    bom_version_id: int | None = None
     qty: Decimal | None = None
     price: Decimal | None = None
     note: str | None = None
@@ -134,10 +136,20 @@ class OrderPartItemRead(BaseModel):
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: decimal_to_str})
 
 
+class BomVersionBrief(BaseModel):
+    id: int
+    name: str | None
+    version: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class OrderItemRead(BaseModel):
     id: int
     order_id: int
     device_id: int
+    bom_version_id: int | None
+    bom_version: BomVersionBrief | None = None
     qty: Decimal
     price: Decimal | None
     note: str | None
@@ -146,6 +158,7 @@ class OrderItemRead(BaseModel):
 
 
 class BomVersionBase(BaseModel):
+    name: str | None = None
     version: int
     status: str = "draft"
 
@@ -155,12 +168,14 @@ class BomVersionCreate(BomVersionBase):
 
 
 class BomVersionUpdate(BaseModel):
+    name: str | None = None
     status: str | None = None
 
 
 class BomVersionRead(BaseModel):
     id: int
     device_id: int
+    name: str | None
     version: int
     status: str
     valid_from: datetime

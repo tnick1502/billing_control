@@ -29,8 +29,35 @@ async def create_device_bom(device_id: int, data: BomVersionCreate, session: Asy
     result = await session.execute(select(Device).where(Device.id == device_id))
     if not result.scalar_one_or_none():
         raise HTTPException(404, "Device not found")
-    bom = DeviceBomVersion(device_id=device_id, **data.model_dump())
+    dump = data.model_dump()
+    if not dump.get("name") or not str(dump.get("name") or "").strip():
+        dump["name"] = f"Спецификация v{dump.get('version', 1)}"
+    bom = DeviceBomVersion(device_id=device_id, **dump)
     session.add(bom)
+    await session.flush()
+
+    active_result = await session.execute(
+        select(DeviceBomVersion).where(
+            DeviceBomVersion.device_id == device_id,
+            DeviceBomVersion.status == "active",
+        )
+    )
+    active_bom = active_result.scalar_one_or_none()
+    if active_bom:
+        items_result = await session.execute(
+            select(DeviceBomItem).where(DeviceBomItem.bom_version_id == active_bom.id)
+        )
+        for src in items_result.scalars().all():
+            session.add(
+                DeviceBomItem(
+                    bom_version_id=bom.id,
+                    part_id=src.part_id,
+                    qty_per_device=src.qty_per_device,
+                    scrap_rate=src.scrap_rate,
+                    note=src.note,
+                )
+            )
+
     await session.flush()
     await session.refresh(bom)
     return bom

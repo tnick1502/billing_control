@@ -4,8 +4,10 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.api import devices, parts, orders, bom, monthly_plans, invoices, files
@@ -63,6 +65,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(IntegrityError)
+async def integrity_error_handler(request: Request, exc: IntegrityError):
+    msg = str(exc.orig) if exc.orig else str(exc)
+    if "unique" in msg.lower() or "duplicate" in msg.lower():
+        return JSONResponse(status_code=409, content={"detail": "Запись с такими данными уже существует"})
+    if "foreign key" in msg.lower() or "violates" in msg.lower():
+        return JSONResponse(status_code=400, content={"detail": "Некорректная ссылка (план, деталь и т.д.)"})
+    return JSONResponse(status_code=400, content={"detail": msg})
+
+
 
 app.include_router(devices.router)
 app.include_router(parts.router)

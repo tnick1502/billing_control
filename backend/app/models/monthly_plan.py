@@ -33,7 +33,7 @@ class MonthlyPlanDevice(Base):
     bom_version_id: Mapped[int] = mapped_column(ForeignKey("device_bom_versions.id", ondelete="CASCADE"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
-    __table_args__ = (UniqueConstraint("plan_id", "device_id", name="uq_monthly_plan_devices_plan_device"),)
+    __table_args__ = (UniqueConstraint("plan_id", "device_id", "bom_version_id", name="uq_monthly_plan_devices_plan_device_bom"),)
 
     plan: Mapped["MonthlyPlan"] = relationship("MonthlyPlan", back_populates="devices")
     device: Mapped["Device"] = relationship("Device", foreign_keys=[device_id])

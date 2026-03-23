@@ -30,7 +30,7 @@ async def _generate_part_sku(session: AsyncSession) -> str:
 @router.post("", response_model=PartRead)
 async def create_part(data: PartCreate, session: AsyncSession = Depends(get_db)):
     dump = data.model_dump()
-    if not dump.get("sku") or not str(dump["sku"]).strip():
+    if not dump.get("sku") or not str(dump.get("sku") or "").strip():
         dump["sku"] = await _generate_part_sku(session)
     part = Part(**dump)
     session.add(part)
