@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from app.config import settings
 from app.api import devices, parts, orders, bom, monthly_plans, invoices, files, stats
 from app.database import Base, async_session_maker, engine
+from app.schema_ensure import ensure_schema
 from app.seeds.init_data import seed_database
 
 
@@ -15,6 +16,8 @@ from app.seeds.init_data import seed_database
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    await ensure_schema()
 
     # Ensure S3 bucket exists
     try:

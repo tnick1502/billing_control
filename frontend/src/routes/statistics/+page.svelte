@@ -274,7 +274,9 @@
 
   <section class="bg-surface-800 border border-zinc-700 rounded-xl p-6">
     <h2 class="text-lg font-semibold text-white mb-4">Заказы деталей (прямые позиции в заказе)</h2>
-    <p class="text-sm text-zinc-400 mb-4">Выберите деталь и период по дате заказа.</p>
+    <p class="text-sm text-zinc-400 mb-4">
+      Сумма по дате заказа: прямые позиции «деталь в заказе» + расход по спецификации (BOM) из заказов приборов.
+    </p>
 
     <div class="flex flex-wrap gap-4 items-end mb-6">
       <div>

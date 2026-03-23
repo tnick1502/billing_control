@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Device, Order, OrderItem, OrderPartItem, Part
+from app.models import Device, DeviceBomItem, Order, OrderItem, OrderPartItem, Part
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
@@ -97,7 +97,10 @@ async def orders_parts_timeseries(
     if not part:
         raise HTTPException(status_code=404, detail="Деталь не найдена")
 
-    stmt = (
+    by_date: dict[date, float] = defaultdict(float)
+
+    # Прямые строки заказа (деталь как позиция)
+    stmt_direct = (
         select(Order.order_date, func.sum(OrderPartItem.qty).label("qty"))
         .select_from(OrderPartItem)
         .join(Order, OrderPartItem.order_id == Order.id)
@@ -107,13 +110,33 @@ async def orders_parts_timeseries(
             Order.order_date <= date_to,
         )
         .group_by(Order.order_date)
-        .order_by(Order.order_date)
     )
-    result = await session.execute(stmt)
-    rows = result.all()
+    for od, qty in (await session.execute(stmt_direct)).all():
+        by_date[od] += float(qty)
 
-    labels = [r[0].isoformat() for r in rows]
-    data = [round(float(r[1]), 3) for r in rows]
+    # Через заказы приборов × BOM (qty приборов × qty_per_device в спецификации)
+    stmt_bom = (
+        select(
+            Order.order_date,
+            func.sum(OrderItem.qty * DeviceBomItem.qty_per_device).label("qty"),
+        )
+        .select_from(OrderItem)
+        .join(Order, OrderItem.order_id == Order.id)
+        .join(DeviceBomItem, DeviceBomItem.bom_version_id == OrderItem.bom_version_id)
+        .where(
+            OrderItem.bom_version_id.isnot(None),
+            DeviceBomItem.part_id == part_id,
+            Order.order_date >= date_from,
+            Order.order_date <= date_to,
+        )
+        .group_by(Order.order_date)
+    )
+    for od, qty in (await session.execute(stmt_bom)).all():
+        by_date[od] += float(qty)
+
+    labels_sorted = sorted(by_date.keys())
+    labels = [d.isoformat() for d in labels_sorted]
+    data = [round(by_date[d], 3) for d in labels_sorted]
 
     return {
         "part_id": part_id,
@@ -123,7 +146,7 @@ async def orders_parts_timeseries(
         "labels": labels,
         "datasets": [
             {
-                "label": f"Заказано: {part.name}",
+                "label": f"Всего: {part.name} (прямые заказы + по BOM в заказах приборов)",
                 "data": data,
                 "borderColor": "rgb(245, 158, 11)",
                 "backgroundColor": "rgba(245, 158, 11, 0.2)",

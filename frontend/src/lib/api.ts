@@ -10,7 +10,16 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || JSON.stringify(err));
+    const d = err.detail;
+    const msg =
+      typeof d === 'string'
+        ? d
+        : Array.isArray(d)
+          ? d.map((x: { msg?: string }) => x?.msg).filter(Boolean).join('; ') || JSON.stringify(d)
+          : d != null
+            ? JSON.stringify(d)
+            : res.statusText;
+    throw new Error(msg || 'Ошибка запроса');
   }
   if (res.status === 204) return undefined as T;
   return res.json();
