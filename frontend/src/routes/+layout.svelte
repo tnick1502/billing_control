@@ -16,6 +16,7 @@
       <a href="/orders" class="block px-3 py-2 rounded-lg text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors">Заказы</a>
       <a href="/bom" class="block px-3 py-2 rounded-lg text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors">Спецификации</a>
       <a href="/invoices" class="block px-3 py-2 rounded-lg text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors">Счета</a>
+      <a href="/statistics" class="block px-3 py-2 rounded-lg text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors">Статистика</a>
     </nav>
   </aside>
   <main class="flex-1 overflow-auto">

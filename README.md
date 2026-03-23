@@ -50,6 +50,8 @@ Frontend на http://localhost:5173 проксирует `/api` на backend.
 
 ## API
 
+- `GET /stats/orders-devices-timeseries` — ряды по датам заказа и приборам (для графика)
+- `GET /stats/orders-parts-timeseries?part_id=&date_from=&date_to=` — ряды по прямым заказам детали за период
 - `GET /health` — проверка
 - `GET/POST /devices` — приборы
 - `GET/POST /parts` — детали

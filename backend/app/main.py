@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
-from app.api import devices, parts, orders, bom, monthly_plans, invoices, files
+from app.api import devices, parts, orders, bom, monthly_plans, invoices, files, stats
 from app.database import Base, async_session_maker, engine
 from app.seeds.init_data import seed_database
 
@@ -73,6 +73,7 @@ app.include_router(bom.router)
 app.include_router(monthly_plans.router)
 app.include_router(invoices.router)
 app.include_router(files.router)
+app.include_router(stats.router)
 
 
 @app.get("/health")

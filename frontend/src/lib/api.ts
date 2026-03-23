@@ -103,7 +103,36 @@ export const api = {
   files: {
     presignedUrl: (fileId: number) => fetchApi<{ url: string }>(`/files/${fileId}/presigned-url`),
   } as { presignedUrl: (fileId: number) => Promise<{ url: string }> },
+  stats: {
+    ordersDevicesTimeseries: () => fetchApi<StatsChartPayload>('/stats/orders-devices-timeseries'),
+    ordersPartsTimeseries: (partId: number, dateFrom: string, dateTo: string) => {
+      const q = new URLSearchParams({
+        part_id: String(partId),
+        date_from: dateFrom,
+        date_to: dateTo,
+      });
+      return fetchApi<StatsPartChartPayload>(`/stats/orders-parts-timeseries?${q}`);
+    },
+  },
 };
+
+export interface StatsDataset {
+  label: string;
+  data: number[];
+  borderColor?: string;
+  backgroundColor?: string;
+  device_id?: number;
+}
+export interface StatsChartPayload {
+  labels: string[];
+  datasets: StatsDataset[];
+}
+export interface StatsPartChartPayload extends StatsChartPayload {
+  part_id: number;
+  part_name: string;
+  date_from: string;
+  date_to: string;
+}
 
 export interface Device {
   id: number;
