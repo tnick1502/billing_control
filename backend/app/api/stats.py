@@ -1,7 +1,7 @@
 """Статистика по заказам для графиков."""
 
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
@@ -13,6 +13,12 @@ from app.models import Device, DeviceBomItem, Order, OrderItem, OrderPartItem, P
 router = APIRouter(prefix="/stats", tags=["stats"])
 
 
+def _normalize_month_start(value: date | datetime) -> date:
+    """Первая дата месяца из значения БД (date или datetime от date_trunc)."""
+    d = value.date() if isinstance(value, datetime) else value
+    return date(d.year, d.month, 1)
+
+
 @router.get("/orders-devices-timeseries")
 async def orders_devices_timeseries(
     date_from: date = Query(..., description="Начало периода (включительно)"),
@@ -20,19 +26,23 @@ async def orders_devices_timeseries(
     session: AsyncSession = Depends(get_db),
 ):
     """
-    Сумма количества по позициям заказов (приборы) по дате заказа и прибору.
+    Сумма количества по позициям заказов (приборы) по календарному месяцу и прибору.
+    Все заказы за месяц (например, весь март) суммируются в одну точку на графике.
     Формат удобен для Chart.js (labels + datasets).
     """
     if date_from > date_to:
         raise HTTPException(status_code=400, detail="Дата начала не может быть позже даты конца")
 
+    # PostgreSQL: группировка по месяцу (date_trunc)
+    month_bucket = func.date_trunc("month", Order.order_date).label("month_bucket")
+
     stmt = (
-        select(Order.order_date, OrderItem.device_id, func.sum(OrderItem.qty).label("qty"))
+        select(month_bucket, OrderItem.device_id, func.sum(OrderItem.qty).label("qty"))
         .select_from(OrderItem)
         .join(Order, OrderItem.order_id == Order.id)
         .where(Order.order_date >= date_from, Order.order_date <= date_to)
-        .group_by(Order.order_date, OrderItem.device_id)
-        .order_by(Order.order_date, OrderItem.device_id)
+        .group_by(month_bucket, OrderItem.device_id)
+        .order_by(month_bucket, OrderItem.device_id)
     )
     result = await session.execute(stmt)
     rows = result.all()
@@ -40,17 +50,18 @@ async def orders_devices_timeseries(
     if not rows:
         return {"labels": [], "datasets": []}
 
-    dates_set = {r[0] for r in rows}
-    labels = sorted(dates_set)
+    month_starts = {_normalize_month_start(r[0]) for r in rows}
+    labels = sorted(month_starts)
 
     device_ids = sorted({r[1] for r in rows})
     dev_result = await session.execute(select(Device.id, Device.primary_name).where(Device.id.in_(device_ids)))
     id_to_name = {d.id: d.primary_name for d in dev_result.all()}
 
-    # (date, device_id) -> qty
+    # (month_start, device_id) -> qty
     cell: dict[tuple[date, int], float] = defaultdict(float)
-    for od, did, qty in rows:
-        cell[(od, did)] += float(qty)
+    for month_val, did, qty in rows:
+        m0 = _normalize_month_start(month_val)
+        cell[(m0, did)] += float(qty)
 
     datasets = []
     # стабильные цвета для линий

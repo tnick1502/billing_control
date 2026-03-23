@@ -193,7 +193,7 @@
                 </tbody>
               </table>
 
-              <h3 class="text-sm font-medium text-zinc-400 mb-2">Детали — зелёный = есть счёт, красный = нет</h3>
+              <h3 class="text-sm font-medium text-zinc-400 mb-2">Детали</h3>
               <table class="w-full rounded-xl border border-zinc-700 overflow-hidden">
                 <thead class="bg-zinc-800 text-zinc-400 text-left">
                   <tr>

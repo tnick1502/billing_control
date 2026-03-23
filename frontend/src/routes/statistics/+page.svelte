@@ -14,8 +14,9 @@
   /** Строка — как value у &lt;option&gt;, иначе bind ломается */
   let selectedPartId = '';
 
-  let deviceDateFrom = '';
-  let deviceDateTo = '';
+  /** Период для графика приборов: YYYY-MM */
+  let deviceMonthFrom = '';
+  let deviceMonthTo = '';
   let partDateFrom = '';
   let partDateTo = '';
 
@@ -37,15 +38,50 @@
     return { from, to };
   }
 
+  /** Последние 12 календарных месяцев (включая текущий) */
+  function defaultMonthRange() {
+    const today = new Date();
+    const to = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+    const f = new Date(today.getFullYear(), today.getMonth() - 11, 1);
+    const from = `${f.getFullYear()}-${String(f.getMonth() + 1).padStart(2, '0')}`;
+    return { from, to };
+  }
+
+  /** Переводит диапазон месяцев в date_from / date_to для API */
+  function monthRangeToApiDates(fromYm: string, toYm: string): { dateFrom: string; dateTo: string } {
+    const [fy, fm] = fromYm.split('-').map(Number);
+    const [ty, tm] = toYm.split('-').map(Number);
+    const dateFrom = `${fy}-${String(fm).padStart(2, '0')}-01`;
+    const lastDay = new Date(ty, tm, 0).getDate();
+    const dateTo = `${ty}-${String(tm).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    return { dateFrom, dateTo };
+  }
+
+  const MONTHS_RU = ['янв.', 'фев.', 'мар.', 'апр.', 'май', 'июн.', 'июл.', 'авг.', 'сен.', 'окт.', 'ноя.', 'дек.'];
+
   function formatAxisDate(iso: string) {
     const [y, m, d] = iso.split('-');
     return `${d}.${m}.${y}`;
+  }
+
+  /** Подпись оси для месячных меток (YYYY-MM-01 с бэкенда) */
+  function formatAxisMonth(iso: string) {
+    const [y, m] = iso.split('-').map(Number);
+    if (!y || !m) return iso;
+    return `${MONTHS_RU[m - 1]} ${y}`;
   }
 
   function chartJsDefaults(Chart: typeof import('chart.js').Chart) {
     Chart.defaults.color = '#a1a1aa';
     Chart.defaults.borderColor = '#3f3f46';
   }
+
+  /** Тонкая сетка (Chart.js v4: grid.lineWidth + полупрозрачный цвет) */
+  const thinGrid = {
+    color: 'rgba(113, 113, 122, 0.38)',
+    lineWidth: 1,
+    borderDash: [2, 3] as [number, number],
+  };
 
   function buildChartOptions(title: string): import('chart.js').ChartOptions<'line'> {
     return {
@@ -59,12 +95,14 @@
       scales: {
         x: {
           ticks: { color: '#a1a1aa', maxRotation: 45 },
-          grid: { color: '#27272a' },
+          grid: { ...thinGrid },
+          border: { dash: [2, 2] as [number, number], color: 'rgba(113, 113, 122, 0.55)' },
           offset: true,
         },
         y: {
           ticks: { color: '#a1a1aa' },
-          grid: { color: '#27272a' },
+          grid: { ...thinGrid },
+          border: { dash: [2, 2] as [number, number], color: 'rgba(113, 113, 122, 0.55)' },
           beginAtZero: true,
         },
       },
@@ -89,7 +127,7 @@
     deviceChart = new Chart(deviceCanvas, {
       type: 'line',
       data: {
-        labels: payload.labels.map(formatAxisDate),
+        labels: payload.labels.map(formatAxisMonth),
         datasets: payload.datasets.map((ds) => ({
           label: ds.label,
           data: ds.data,
@@ -102,7 +140,7 @@
           borderWidth: 2,
         })),
       },
-      options: buildChartOptions('Заказы приборов: количество по дате заказа'),
+      options: buildChartOptions('Заказы приборов: сумма по календарным месяцам'),
     });
   }
 
@@ -141,8 +179,12 @@
   }
 
   async function loadDeviceSeries() {
-    if (!deviceDateFrom || !deviceDateTo) {
-      deviceError = 'Укажите период';
+    if (!deviceMonthFrom || !deviceMonthTo) {
+      deviceError = 'Укажите период (месяцы)';
+      return;
+    }
+    if (deviceMonthFrom > deviceMonthTo) {
+      deviceError = 'Месяц «с» не может быть позже «по»';
       return;
     }
     deviceError = '';
@@ -150,7 +192,8 @@
     try {
       const mod = await import('chart.js');
       const Chart = mod.Chart;
-      const payload = await api.stats.ordersDevicesTimeseries(deviceDateFrom, deviceDateTo);
+      const { dateFrom, dateTo } = monthRangeToApiDates(deviceMonthFrom, deviceMonthTo);
+      const payload = await api.stats.ordersDevicesTimeseries(dateFrom, dateTo);
       await renderDeviceChart(payload, Chart);
     } catch (e) {
       console.error(e);
@@ -186,11 +229,12 @@
 
   onMount(() => {
     (async () => {
-      const { from, to } = defaultDateRange();
-      deviceDateFrom = from;
-      deviceDateTo = to;
-      partDateFrom = from;
-      partDateTo = to;
+      const { from: df, to: dt } = defaultDateRange();
+      const { from: mf, to: mt } = defaultMonthRange();
+      deviceMonthFrom = mf;
+      deviceMonthTo = mt;
+      partDateFrom = df;
+      partDateTo = dt;
 
       try {
         parts = await api.parts.list();
@@ -226,23 +270,24 @@
   <section class="bg-surface-800 border border-zinc-700 rounded-xl p-6">
     <h2 class="text-lg font-semibold text-white mb-4">Заказы приборов</h2>
     <p class="text-sm text-zinc-400 mb-4">
-      Сумма количества по строкам заказов (позиции с приборами) по дате заказа в выбранном периоде.
+      По каждому прибору суммируется количество за календарный месяц (все заказы за март и т.д.). Если заказы были только в одном
+      месяце — на графике одна точка.
     </p>
 
     <div class="flex flex-wrap gap-4 items-end mb-6">
       <div>
-        <label class="block text-sm text-zinc-400 mb-1">Дата с</label>
+        <label class="block text-sm text-zinc-400 mb-1">Месяц с</label>
         <input
-          type="date"
-          bind:value={deviceDateFrom}
+          type="month"
+          bind:value={deviceMonthFrom}
           class="px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
         />
       </div>
       <div>
-        <label class="block text-sm text-zinc-400 mb-1">Дата по</label>
+        <label class="block text-sm text-zinc-400 mb-1">Месяц по</label>
         <input
-          type="date"
-          bind:value={deviceDateTo}
+          type="month"
+          bind:value={deviceMonthTo}
           class="px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
         />
       </div>

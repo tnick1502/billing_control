@@ -1,5 +1,5 @@
 import io
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -12,6 +12,7 @@ from app.models import (
     Part,
     Order,
     OrderItem,
+    OrderPartItem,
     DeviceBomVersion,
     DeviceBomItem,
     MonthlyPlan,
@@ -77,18 +78,48 @@ async def seed_database(session: AsyncSession) -> bool:
         DeviceBomItem(bom_version_id=bom3.id, part_id=p4.id, qty_per_device=Decimal("4"), scrap_rate=Decimal("0.05")),
     ])
 
-    # Orders
+    # Orders — январь / февраль / март: разные даты, приборы и прямые детали (для графиков и тестов)
+    o_jan1 = Order(status="confirmed", order_date=date(2026, 1, 8), description="Январь: датчики и реле")
+    o_jan2 = Order(status="draft", order_date=date(2026, 1, 15), description="Январь: черновик по блокам питания")
+    o_jan3 = Order(status="confirmed", order_date=date(2026, 1, 22), description="Январь: смешанная партия")
+    o_jan4 = Order(status="confirmed", order_date=date(2026, 1, 28), description="Январь: только прямые детали")
+    o_feb1 = Order(status="confirmed", order_date=date(2026, 2, 5), description="Февраль: первая волна")
+    o_feb2 = Order(status="confirmed", order_date=date(2026, 2, 12), description="Февраль: реле отдельной строкой")
+    o_feb3 = Order(status="confirmed", order_date=date(2026, 2, 19), description="Февраль: все три прибора")
+    o_feb4 = Order(status="confirmed", order_date=date(2026, 2, 26), description="Февраль: детали без приборов")
     o1 = Order(status="confirmed", order_date=date(2026, 3, 1), description="Заказ для производства")
     o2 = Order(status="confirmed", order_date=date(2026, 3, 5), description="Дополнительная партия")
-    session.add_all([o1, o2])
+    session.add_all([o_jan1, o_jan2, o_jan3, o_jan4, o_feb1, o_feb2, o_feb3, o_feb4, o1, o2])
     await session.flush()
 
-    # Заказы со спецификациями (активная BOM на каждый прибор)
+    # Позиции с прибором (активная BOM)
     session.add_all([
+        # Январь
+        OrderItem(order_id=o_jan1.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("12"), price=Decimal("1520.00")),
+        OrderItem(order_id=o_jan1.id, device_id=d2.id, bom_version_id=bom2.id, qty=Decimal("6"), price=Decimal("790.00")),
+        OrderItem(order_id=o_jan2.id, device_id=d3.id, bom_version_id=bom3.id, qty=Decimal("4"), price=Decimal("2180.00")),
+        OrderItem(order_id=o_jan3.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("8"), price=Decimal("1510.00")),
+        OrderItem(order_id=o_jan3.id, device_id=d2.id, bom_version_id=bom2.id, qty=Decimal("3"), price=Decimal("805.00")),
+        OrderItem(order_id=o_jan3.id, device_id=d3.id, bom_version_id=bom3.id, qty=Decimal("2"), price=Decimal("2190.00")),
+        # Февраль
+        OrderItem(order_id=o_feb1.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("15"), price=Decimal("1490.00")),
+        OrderItem(order_id=o_feb1.id, device_id=d3.id, bom_version_id=bom3.id, qty=Decimal("7"), price=Decimal("2210.00")),
+        OrderItem(order_id=o_feb2.id, device_id=d2.id, bom_version_id=bom2.id, qty=Decimal("11"), price=Decimal("795.00")),
+        OrderItem(order_id=o_feb3.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("5"), price=Decimal("1500.00")),
+        OrderItem(order_id=o_feb3.id, device_id=d2.id, bom_version_id=bom2.id, qty=Decimal("5"), price=Decimal("800.00")),
+        OrderItem(order_id=o_feb3.id, device_id=d3.id, bom_version_id=bom3.id, qty=Decimal("4"), price=Decimal("2200.00")),
+        # Март (как было)
         OrderItem(order_id=o1.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("10"), price=Decimal("1500.00")),
         OrderItem(order_id=o1.id, device_id=d2.id, bom_version_id=bom2.id, qty=Decimal("5"), price=Decimal("800.00")),
         OrderItem(order_id=o2.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("20"), price=Decimal("1450.00")),
         OrderItem(order_id=o2.id, device_id=d3.id, bom_version_id=bom3.id, qty=Decimal("3"), price=Decimal("2200.00")),
+    ])
+    # Прямые позиции деталей (без прибора)
+    session.add_all([
+        OrderPartItem(order_id=o_jan4.id, part_id=p3.id, qty=Decimal("200"), price=Decimal("2.50"), note="Резисторы оптом"),
+        OrderPartItem(order_id=o_jan4.id, part_id=p2.id, qty=Decimal("25"), price=Decimal("450.00")),
+        OrderPartItem(order_id=o_feb4.id, part_id=p1.id, qty=Decimal("40"), price=Decimal("85.00")),
+        OrderPartItem(order_id=o_feb4.id, part_id=p4.id, qty=Decimal("60"), price=Decimal("12.00"), note="Конденсаторы на склад"),
     ])
 
     # Monthly plan (March 2026)
