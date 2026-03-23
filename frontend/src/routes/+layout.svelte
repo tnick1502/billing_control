@@ -2,9 +2,11 @@
   import '../app.css';
   import { page } from '$app/stores';
 
+  /** Явная зависимость от маршрута — иначе классы навигации могут не обновляться при client-side навигации */
+  $: pathname = $page.url.pathname;
+
   function navClass(href: string) {
-    const path = $page.url.pathname;
-    const active = path === href || (href !== '/' && path.startsWith(href + '/'));
+    const active = pathname === href || (href !== '/' && pathname.startsWith(href + '/'));
     return `block px-3 py-2 rounded-md text-sm transition-colors ${
       active ? 'bg-zinc-800 text-amber-400 font-medium' : 'text-zinc-300 hover:bg-zinc-800/80 hover:text-white'
     }`;
@@ -57,14 +59,9 @@
           aria-label="Финансы"
         >
           <a href="/orders" class={navClass('/orders')}>Заказы</a>
-          <a href="/bom" class={navClass('/bom')}>Спецификации</a>
+          <a href="/statistics" class={navClass('/statistics')}>Статистика</a>
           <a href="/invoices" class={navClass('/invoices')}>Счета</a>
         </div>
-      </div>
-
-      <!-- Статистика -->
-      <div class="px-1">
-        <a href="/statistics" class={navClass('/statistics')}>Статистика</a>
       </div>
     </nav>
   </aside>
