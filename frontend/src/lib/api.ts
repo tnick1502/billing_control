@@ -107,14 +107,12 @@ export const api = {
 
 export interface Device {
   id: number;
-  sku: string;
   primary_name: string;
   model: string | null;
   is_active: boolean;
   created_at: string;
 }
 export interface DeviceCreate {
-  sku?: string | null;
   primary_name: string;
   model?: string | null;
   is_active?: boolean;
@@ -128,14 +126,12 @@ export interface DeviceAlias {
 
 export interface Part {
   id: number;
-  sku: string;
   name: string;
   uom: string;
   is_active: boolean;
   created_at: string;
 }
 export interface PartCreate {
-  sku?: string | null;
   name: string;
   uom: string;
   is_active?: boolean;
@@ -143,13 +139,11 @@ export interface PartCreate {
 
 export interface Order {
   id: number;
-  order_no: string;
   status: string;
   order_date: string;
   created_at: string;
 }
 export interface OrderCreate {
-  order_no: string;
   status?: string;
   order_date: string;
 }

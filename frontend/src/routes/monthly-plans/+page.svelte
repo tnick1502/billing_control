@@ -6,7 +6,7 @@
 
   let plans: MonthlyPlan[] = [];
   let plansData: Map<number, { devices: MonthlyPlanDevice[]; parts: MonthlyPlanPartWithCoverage[] }> = new Map();
-  let devices: { id: number; primary_name: string; sku: string }[] = [];
+  let devices: { id: number; primary_name: string }[] = [];
   let parts: { id: number; name: string }[] = [];
   let invoices: { id: number; invoice_no: string }[] = [];
   let loading = true;
@@ -36,7 +36,7 @@
         api.parts.list(),
         api.invoices.list(),
       ]);
-      devices = devs.map((d) => ({ id: d.id, primary_name: d.primary_name, sku: d.sku }));
+      devices = devs.map((d) => ({ id: d.id, primary_name: d.primary_name }));
       parts = pts.map((x) => ({ id: x.id, name: x.name }));
       invoices = invs.map((i) => ({ id: i.id, invoice_no: i.invoice_no }));
 
@@ -81,8 +81,8 @@
   function deviceName(id: number) {
     return devices.find((d) => d.id === id)?.primary_name ?? id;
   }
-  function deviceSku(id: number) {
-    return devices.find((d) => d.id === id)?.sku ?? '';
+  function deviceId(id: number) {
+    return devices.find((d) => d.id === id)?.id ?? id;
   }
   function partName(id: number) {
     return parts.find((p) => p.id === id)?.name ?? id;
@@ -174,7 +174,7 @@
               <table class="w-full mb-6 rounded-xl border border-zinc-700 overflow-hidden">
                 <thead class="bg-zinc-800 text-zinc-400 text-left">
                   <tr>
-                    <th class="px-4 py-3 font-medium">SKU</th>
+                    <th class="px-4 py-3 font-medium">ID</th>
                     <th class="px-4 py-3 font-medium">Прибор</th>
                     <th class="px-4 py-3 font-medium">Кол-во</th>
                   </tr>
@@ -182,7 +182,7 @@
                 <tbody class="divide-y divide-zinc-800">
                   {#each data.devices as d}
                     <tr class="hover:bg-zinc-800/50">
-                      <td class="px-4 py-3 font-mono text-sm">{deviceSku(d.device_id)}</td>
+                      <td class="px-4 py-3 font-mono text-sm">{deviceId(d.device_id)}</td>
                       <td class="px-4 py-3">{deviceName(d.device_id)}</td>
                       <td class="px-4 py-3 font-mono">{formatQty(d.qty_total)}</td>
                     </tr>

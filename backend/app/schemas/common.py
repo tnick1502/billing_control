@@ -16,7 +16,6 @@ class BaseSchema(BaseModel):
 
 
 class DeviceBase(BaseModel):
-    sku: str | None = None  # Auto-generated if not provided
     primary_name: str
     model: str | None = None
     is_active: bool = True
@@ -51,7 +50,6 @@ class DeviceAliasRead(BaseModel):
 
 
 class PartBase(BaseModel):
-    sku: str | None = None  # Auto-generated if not provided
     name: str
     uom: str
     is_active: bool = True
@@ -75,7 +73,6 @@ class PartRead(PartBase):
 
 
 class OrderBase(BaseModel):
-    order_no: str
     status: str = "draft"
     order_date: date
 
@@ -85,7 +82,6 @@ class OrderCreate(OrderBase):
 
 
 class OrderUpdate(BaseModel):
-    order_no: str | None = None
     status: str | None = None
     order_date: date | None = None
 

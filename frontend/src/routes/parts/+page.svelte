@@ -30,7 +30,7 @@
 
   function openEdit(p: Part) {
     editingId = p.id;
-    form = { sku: p.sku, name: p.name, uom: p.uom, is_active: p.is_active };
+    form = { name: p.name, uom: p.uom, is_active: p.is_active };
     modalOpen = true;
   }
 
@@ -74,7 +74,7 @@
       <table class="w-full">
         <thead class="bg-surface-800 text-zinc-400 text-left">
           <tr>
-            <th class="px-4 py-3 font-medium">SKU</th>
+            <th class="px-4 py-3 font-medium">ID</th>
             <th class="px-4 py-3 font-medium">Название</th>
             <th class="px-4 py-3 font-medium">Ед. изм.</th>
             <th class="px-4 py-3 font-medium">Активна</th>
@@ -84,7 +84,7 @@
         <tbody class="divide-y divide-zinc-800">
           {#each parts as p}
             <tr class="hover:bg-zinc-800/50">
-              <td class="px-4 py-3 font-mono text-sm">{p.sku}</td>
+              <td class="px-4 py-3 font-mono text-sm">{p.id}</td>
               <td class="px-4 py-3">{p.name}</td>
               <td class="px-4 py-3 text-zinc-400">{p.uom}</td>
               <td class="px-4 py-3">{p.is_active ? 'Да' : 'Нет'}</td>
@@ -105,12 +105,6 @@
     <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
       <h2 class="text-lg font-semibold text-white mb-4">{editingId ? 'Редактировать' : 'Новая деталь'}</h2>
       <form on:submit|preventDefault={save} class="space-y-4">
-        {#if editingId}
-          <div>
-            <label class="block text-sm text-zinc-400 mb-1">SKU</label>
-            <input bind:value={form.sku} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" readonly />
-          </div>
-        {/if}
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Название</label>
           <input bind:value={form.name} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />

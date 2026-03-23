@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -10,7 +10,6 @@ class Order(Base):
     __tablename__ = "orders"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    order_no: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
     order_date: Mapped[date] = mapped_column(Date, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -30,7 +29,7 @@ class OrderItem(Base):
     price: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    __table_args__ = (UniqueConstraint("order_id", "device_id", name="uq_order_items_order_device"),)
+    __table_args__ = ()
 
     order: Mapped["Order"] = relationship("Order", back_populates="items")
     device: Mapped["Device"] = relationship("Device", foreign_keys=[device_id])

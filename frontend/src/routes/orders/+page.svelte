@@ -9,7 +9,7 @@
   let parts: { id: number; name: string }[] = [];
   let loading = true;
   let modalOpen = false;
-  let form: OrderCreate = { order_no: '', status: 'draft', order_date: new Date().toISOString().slice(0, 10) };
+  let form: OrderCreate = { status: 'draft', order_date: new Date().toISOString().slice(0, 10) };
   let editingId: number | null = null;
   let selectedOrder: Order | null = null;
   let orderItems: OrderItem[] = [];
@@ -40,13 +40,13 @@
 
   function openCreate() {
     editingId = null;
-    form = { order_no: '', status: 'draft', order_date: new Date().toISOString().slice(0, 10) };
+    form = { status: 'draft', order_date: new Date().toISOString().slice(0, 10) };
     modalOpen = true;
   }
 
   function openEdit(o: Order) {
     editingId = o.id;
-    form = { order_no: o.order_no, status: o.status, order_date: o.order_date };
+    form = { status: o.status, order_date: o.order_date };
     modalOpen = true;
   }
 
@@ -209,7 +209,7 @@
       <table class="w-full">
         <thead class="bg-surface-800 text-zinc-400 text-left">
           <tr>
-            <th class="px-4 py-3 font-medium">№ заказа</th>
+            <th class="px-4 py-3 font-medium">ID</th>
             <th class="px-4 py-3 font-medium">Дата</th>
             <th class="px-4 py-3 font-medium">Статус</th>
             <th class="px-4 py-3 w-32"></th>
@@ -218,7 +218,7 @@
         <tbody class="divide-y divide-zinc-800">
           {#each orders as o}
             <tr class="hover:bg-zinc-800/50">
-              <td class="px-4 py-3 font-mono">{o.order_no}</td>
+              <td class="px-4 py-3 font-mono">{o.id}</td>
               <td class="px-4 py-3">{formatDate(o.order_date)}</td>
               <td class="px-4 py-3"><span class="px-2 py-0.5 rounded text-sm bg-zinc-700">{o.status}</span></td>
               <td class="px-4 py-3">
@@ -237,7 +237,7 @@
 {#if selectedOrder}
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" on:click={() => selectedOrder = null} role="button" tabindex="0">
     <div class="bg-surface-800 rounded-xl p-6 w-full max-w-2xl max-h-[80vh] overflow-auto border border-zinc-700" on:click|stopPropagation role="dialog">
-      <h2 class="text-lg font-semibold text-white mb-4">Позиции заказа {selectedOrder.order_no}</h2>
+      <h2 class="text-lg font-semibold text-white mb-4">Позиции заказа #{selectedOrder.id}</h2>
       <div class="flex gap-2 mb-4">
         <button on:click={openAddItem} class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 text-sm">+ Прибор</button>
         <button on:click={openAddPartItem} class="px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 text-sm">+ Деталь</button>
@@ -305,10 +305,6 @@
       <h2 class="text-lg font-semibold text-white mb-4">{editingId ? 'Редактировать' : 'Новый заказ'}</h2>
       <form on:submit|preventDefault={save} class="space-y-4">
         <div>
-          <label class="block text-sm text-zinc-400 mb-1">№ заказа</label>
-          <input bind:value={form.order_no} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
-        </div>
-        <div>
           <label class="block text-sm text-zinc-400 mb-1">Дата</label>
           <input type="date" bind:value={form.order_date} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
         </div>
@@ -345,10 +341,11 @@
         </div>
         {#if bomsForDevice.length > 0}
           <div>
-            <label class="block text-sm text-zinc-400 mb-1">Спецификация</label>
+            <label class="block text-sm text-zinc-400 mb-1">Спецификация <span class="text-amber-400">*</span></label>
             <select
               bind:value={itemForm.bom_version_id}
               class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
+              required
             >
               {#each bomsForDevice as b}
                 <option value={b.id}>

@@ -30,7 +30,7 @@
 
   function openEdit(d: Device) {
     editingId = d.id;
-    form = { sku: d.sku, primary_name: d.primary_name, model: d.model ?? '', is_active: d.is_active };
+    form = { primary_name: d.primary_name, model: d.model ?? '', is_active: d.is_active };
     modalOpen = true;
   }
 
@@ -74,7 +74,7 @@
       <table class="w-full">
         <thead class="bg-surface-800 text-zinc-400 text-left">
           <tr>
-            <th class="px-4 py-3 font-medium">SKU</th>
+            <th class="px-4 py-3 font-medium">ID</th>
             <th class="px-4 py-3 font-medium">Название</th>
             <th class="px-4 py-3 font-medium">Модель</th>
             <th class="px-4 py-3 font-medium">Активен</th>
@@ -84,7 +84,7 @@
         <tbody class="divide-y divide-zinc-800">
           {#each devices as d}
             <tr class="hover:bg-zinc-800/50">
-              <td class="px-4 py-3 font-mono text-sm">{d.sku}</td>
+              <td class="px-4 py-3 font-mono text-sm">{d.id}</td>
               <td class="px-4 py-3">{d.primary_name}</td>
               <td class="px-4 py-3 text-zinc-400">{d.model || '—'}</td>
               <td class="px-4 py-3">{d.is_active ? 'Да' : 'Нет'}</td>
@@ -105,12 +105,6 @@
     <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
       <h2 class="text-lg font-semibold text-white mb-4">{editingId ? 'Редактировать' : 'Новый прибор'}</h2>
       <form on:submit|preventDefault={save} class="space-y-4">
-        {#if editingId}
-          <div>
-            <label class="block text-sm text-zinc-400 mb-1">SKU</label>
-            <input bind:value={form.sku} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" readonly />
-          </div>
-        {/if}
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Название</label>
           <input bind:value={form.primary_name} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
