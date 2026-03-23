@@ -115,6 +115,14 @@
     await loadBomsForItemDevice();
   }
 
+  function handleDeviceChangeInItem(e: Event) {
+    const el = e.currentTarget;
+    if (el instanceof HTMLSelectElement) {
+      itemForm.device_id = Number(el.value);
+      onDeviceChangeInItem();
+    }
+  }
+
   async function saveItem() {
     if (!selectedOrder) return;
     try {
@@ -326,10 +334,7 @@
           <label class="block text-sm text-zinc-400 mb-1">Прибор</label>
           <select
             value={itemForm.device_id}
-            on:change={(e) => {
-              itemForm.device_id = Number((e.target as HTMLSelectElement).value);
-              onDeviceChangeInItem();
-            }}
+            on:change={handleDeviceChangeInItem}
             class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
             required
           >
