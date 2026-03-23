@@ -2,11 +2,12 @@
   import '../app.css';
   import { page } from '$app/stores';
 
-  /** Явная зависимость от маршрута — иначе классы навигации могут не обновляться при client-side навигации */
-  $: pathname = $page.url.pathname;
-
-  function navClass(href: string) {
-    const active = pathname === href || (href !== '/' && pathname.startsWith(href + '/'));
+  /**
+   * path должен приходить из шаблона как `$page.url.pathname`, иначе Svelte не подписывается
+   * на store и классы не обновляются при клиентской навигации.
+   */
+  function navClass(href: string, path: string) {
+    const active = path === href || (href !== '/' && path.startsWith(href + '/'));
     return `block px-3 py-2 rounded-md text-sm transition-colors ${
       active ? 'bg-zinc-800 text-amber-400 font-medium' : 'text-zinc-300 hover:bg-zinc-800/80 hover:text-white'
     }`;
@@ -23,7 +24,7 @@
     <nav class="flex-1 py-3 px-2 space-y-4 overflow-y-auto">
       <!-- отдельно: планы -->
       <div>
-        <a href="/monthly-plans" class={navClass('/monthly-plans')}>Месячные планы</a>
+        <a href="/monthly-plans" class={navClass('/monthly-plans', $page.url.pathname)}>Месячные планы</a>
       </div>
 
       <!-- Производство -->
@@ -39,9 +40,9 @@
           role="group"
           aria-label="Производство"
         >
-          <a href="/parts" class={navClass('/parts')}>Детали</a>
-          <a href="/devices" class={navClass('/devices')}>Приборы</a>
-          <a href="/bom" class={navClass('/bom')}>Спецификации</a>
+          <a href="/parts" class={navClass('/parts', $page.url.pathname)}>Детали</a>
+          <a href="/devices" class={navClass('/devices', $page.url.pathname)}>Приборы</a>
+          <a href="/bom" class={navClass('/bom', $page.url.pathname)}>Спецификации</a>
         </div>
       </div>
 
@@ -58,9 +59,9 @@
           role="group"
           aria-label="Финансы"
         >
-          <a href="/orders" class={navClass('/orders')}>Заказы</a>
-          <a href="/statistics" class={navClass('/statistics')}>Статистика</a>
-          <a href="/invoices" class={navClass('/invoices')}>Счета</a>
+          <a href="/orders" class={navClass('/orders', $page.url.pathname)}>Заказы</a>
+          <a href="/invoices" class={navClass('/invoices', $page.url.pathname)}>Счета</a>
+          <a href="/statistics" class={navClass('/statistics', $page.url.pathname)}>Статистика</a>
         </div>
       </div>
     </nav>
