@@ -77,6 +77,15 @@
 
   async function openItems(o: Order) {
     selectedOrder = o;
+    try {
+      if (devices.length === 0 || parts.length === 0) {
+        const [devs, pts] = await Promise.all([api.devices.list(), api.parts.list()]);
+        devices = devs.map((d) => ({ id: d.id, primary_name: d.primary_name }));
+        parts = pts.map((p) => ({ id: p.id, name: p.name }));
+      }
+    } catch (e) {
+      alert('Не удалось загрузить приборы и детали: ' + (e as Error).message);
+    }
     const [items, partItems, ...bomsArrays] = await Promise.all([
       api.orders.items.list(o.id),
       api.orders.partItems.list(o.id),
@@ -357,9 +366,13 @@
             class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
             required
           >
-            {#each devices as d}
-              <option value={d.id}>{d.primary_name}</option>
-            {/each}
+            {#if devices.length === 0}
+              <option value="" disabled>Нет приборов — добавьте в разделе «Приборы»</option>
+            {:else}
+              {#each devices as d}
+                <option value={d.id}>{d.primary_name}</option>
+              {/each}
+            {/if}
           </select>
         </div>
         {#if bomsForDevice.length > 0}
@@ -403,9 +416,13 @@
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Деталь</label>
           <select bind:value={partItemForm.part_id} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required>
-            {#each parts as p}
-              <option value={p.id}>{p.name}</option>
-            {/each}
+            {#if parts.length === 0}
+              <option value="" disabled>Нет деталей — добавьте в разделе «Детали»</option>
+            {:else}
+              {#each parts as p}
+                <option value={p.id}>{p.name}</option>
+              {/each}
+            {/if}
           </select>
         </div>
         <div>
