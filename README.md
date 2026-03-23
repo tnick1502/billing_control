@@ -19,7 +19,7 @@ docker compose up --build
 - MinIO Console: http://localhost:9001 (minioadmin/minioadmin)
 
 При первом запуске автоматически:
-- применяются миграции БД
+- создаются таблицы в БД (если их ещё нет)
 - создаётся bucket в MinIO
 - заполняется БД тестовыми данными
 
@@ -35,6 +35,8 @@ export DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/mrp_bo
 export S3_ENDPOINT_URL=http://localhost:9000
 poetry run uvicorn app.main:app --reload
 ```
+
+Схема БД создаётся при старте приложения (`create_all`). Для изменения структуры таблиц правьте модели и пересоздайте БД или примените SQL вручную.
 
 ### Frontend
 

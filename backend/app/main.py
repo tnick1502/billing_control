@@ -1,8 +1,4 @@
-import os
-import subprocess
-import sys
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,22 +7,14 @@ from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.api import devices, parts, orders, bom, monthly_plans, invoices, files
-from app.database import async_session_maker
+from app.database import Base, async_session_maker, engine
 from app.seeds.init_data import seed_database
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Run migrations (alembic.ini is in backend/)
-    backend_dir = Path(__file__).resolve().parent.parent
-    result = subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
-        cwd=str(backend_dir),
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        print(f"Alembic migration warning: {result.stderr}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
     # Ensure S3 bucket exists
     try:
