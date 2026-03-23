@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -78,7 +78,14 @@ async def update_bom(bom_id: int, data: BomVersionUpdate, session: AsyncSession 
     bom = result.scalar_one_or_none()
     if not bom:
         raise HTTPException(404, "BOM version not found")
-    for k, v in data.model_dump(exclude_unset=True).items():
+    dump = data.model_dump(exclude_unset=True)
+    if dump.get("status") == "active":
+        await session.execute(
+            update(DeviceBomVersion)
+            .where(DeviceBomVersion.device_id == bom.device_id, DeviceBomVersion.id != bom_id)
+            .values(status="archived")
+        )
+    for k, v in dump.items():
         setattr(bom, k, v)
     await session.flush()
     await session.refresh(bom)

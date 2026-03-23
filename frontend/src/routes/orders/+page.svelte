@@ -17,6 +17,7 @@
   let itemModalOpen = false;
   let itemForm: OrderItemCreate = { device_id: 0, bom_version_id: null, qty: '1', price: null, note: null };
   let bomsForDevice: BomVersion[] = [];
+  let bomsByDevice: Map<number, BomVersion[]> = new Map();
   let editingItemId: number | null = null;
   let partItemModalOpen = false;
   let partItemForm: OrderPartItemCreate = { part_id: 0, qty: '1', price: null, note: null };
@@ -76,8 +77,16 @@
 
   async function openItems(o: Order) {
     selectedOrder = o;
-    orderItems = await api.orders.items.list(o.id);
-    orderPartItems = await api.orders.partItems.list(o.id);
+    const [items, partItems, ...bomsArrays] = await Promise.all([
+      api.orders.items.list(o.id),
+      api.orders.partItems.list(o.id),
+      ...devices.map((d) => api.bom.list(d.id)),
+    ]);
+    orderItems = items;
+    orderPartItems = partItems;
+    const map = new Map<number, BomVersion[]>();
+    devices.forEach((d, i) => map.set(d.id, bomsArrays[i] as BomVersion[]));
+    bomsByDevice = map;
   }
 
   async function openAddItem() {
@@ -85,34 +94,32 @@
     editingItemId = null;
     itemForm = { device_id: devices[0]?.id ?? 0, bom_version_id: null, qty: '1', price: null, note: null };
     itemModalOpen = true;
-    await loadBomsForItemDevice();
+    setBomsForDeviceAndDefault();
   }
 
   async function openEditItem(item: OrderItem) {
     editingItemId = item.id;
     itemForm = { device_id: item.device_id, bom_version_id: item.bom_version_id ?? null, qty: item.qty, price: item.price, note: item.note };
     itemModalOpen = true;
-    await loadBomsForItemDevice();
+    setBomsForDeviceAndDefault();
   }
 
-  async function loadBomsForItemDevice() {
-    if (!itemForm.device_id) {
-      bomsForDevice = [];
-      return;
-    }
-    try {
-      bomsForDevice = await api.bom.list(itemForm.device_id);
-      if (!itemForm.bom_version_id && bomsForDevice.length > 0) {
-        const active = bomsForDevice.find((b) => b.status === 'active') ?? bomsForDevice[0];
-        itemForm = { ...itemForm, bom_version_id: active.id };
-      }
-    } catch {
-      bomsForDevice = [];
+  function setBomsForDeviceAndDefault() {
+    bomsForDevice = bomsByDevice.get(itemForm.device_id) ?? [];
+    if (!itemForm.bom_version_id && bomsForDevice.length > 0) {
+      const active = bomsForDevice.find((b) => b.status === 'active') ?? bomsForDevice[0];
+      itemForm = { ...itemForm, bom_version_id: active.id };
     }
   }
 
   async function onDeviceChangeInItem() {
-    await loadBomsForItemDevice();
+    bomsForDevice = bomsByDevice.get(itemForm.device_id) ?? [];
+    if (bomsForDevice.length > 0) {
+      const active = bomsForDevice.find((b) => b.status === 'active') ?? bomsForDevice[0];
+      itemForm = { ...itemForm, bom_version_id: active.id };
+    } else {
+      itemForm = { ...itemForm, bom_version_id: null };
+    }
   }
 
   function handleDeviceChangeInItem(e: Event) {
@@ -302,8 +309,14 @@
 {#if modalOpen}
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]" on:click={() => modalOpen = false} role="button" tabindex="0">
     <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
-      <h2 class="text-lg font-semibold text-white mb-4">{editingId ? 'Редактировать' : 'Новый заказ'}</h2>
+      <h2 class="text-lg font-semibold text-white mb-4">{editingId ? `Редактировать заказ #${editingId}` : 'Новый заказ'}</h2>
       <form on:submit|preventDefault={save} class="space-y-4">
+        {#if editingId}
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">ID</label>
+            <input value={editingId} readonly class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-zinc-400" />
+          </div>
+        {/if}
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Дата</label>
           <input type="date" bind:value={form.order_date} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />

@@ -103,8 +103,14 @@
 {#if modalOpen}
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" on:click={() => modalOpen = false} role="button" tabindex="0" on:keydown={(e) => e.key === 'Escape' && (modalOpen = false)}>
     <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
-      <h2 class="text-lg font-semibold text-white mb-4">{editingId ? 'Редактировать' : 'Новая деталь'}</h2>
+      <h2 class="text-lg font-semibold text-white mb-4">{editingId ? `Редактировать деталь #${editingId}` : 'Новая деталь'}</h2>
       <form on:submit|preventDefault={save} class="space-y-4">
+        {#if editingId}
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">ID</label>
+            <input value={editingId} readonly class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-zinc-400" />
+          </div>
+        {/if}
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Название</label>
           <input bind:value={form.name} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
