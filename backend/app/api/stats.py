@@ -14,15 +14,23 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 
 
 @router.get("/orders-devices-timeseries")
-async def orders_devices_timeseries(session: AsyncSession = Depends(get_db)):
+async def orders_devices_timeseries(
+    date_from: date = Query(..., description="Начало периода (включительно)"),
+    date_to: date = Query(..., description="Конец периода (включительно)"),
+    session: AsyncSession = Depends(get_db),
+):
     """
     Сумма количества по позициям заказов (приборы) по дате заказа и прибору.
-    За всё время. Формат удобен для Chart.js (labels + datasets).
+    Формат удобен для Chart.js (labels + datasets).
     """
+    if date_from > date_to:
+        raise HTTPException(status_code=400, detail="Дата начала не может быть позже даты конца")
+
     stmt = (
         select(Order.order_date, OrderItem.device_id, func.sum(OrderItem.qty).label("qty"))
         .select_from(OrderItem)
         .join(Order, OrderItem.order_id == Order.id)
+        .where(Order.order_date >= date_from, Order.order_date <= date_to)
         .group_by(Order.order_date, OrderItem.device_id)
         .order_by(Order.order_date, OrderItem.device_id)
     )
@@ -34,7 +42,6 @@ async def orders_devices_timeseries(session: AsyncSession = Depends(get_db)):
 
     dates_set = {r[0] for r in rows}
     labels = sorted(dates_set)
-    date_index = {d: i for i, d in enumerate(labels)}
 
     device_ids = sorted({r[1] for r in rows})
     dev_result = await session.execute(select(Device.id, Device.primary_name).where(Device.id.in_(device_ids)))

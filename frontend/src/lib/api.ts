@@ -104,7 +104,10 @@ export const api = {
     presignedUrl: (fileId: number) => fetchApi<{ url: string }>(`/files/${fileId}/presigned-url`),
   } as { presignedUrl: (fileId: number) => Promise<{ url: string }> },
   stats: {
-    ordersDevicesTimeseries: () => fetchApi<StatsChartPayload>('/stats/orders-devices-timeseries'),
+    ordersDevicesTimeseries: (dateFrom: string, dateTo: string) => {
+      const q = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
+      return fetchApi<StatsChartPayload>(`/stats/orders-devices-timeseries?${q}`);
+    },
     ordersPartsTimeseries: (partId: number, dateFrom: string, dateTo: string) => {
       const q = new URLSearchParams({
         part_id: String(partId),
