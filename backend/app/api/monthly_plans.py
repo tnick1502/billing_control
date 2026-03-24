@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +13,7 @@ from app.schemas.common import (
     MonthlyPlanGenerate,
     MonthlyPlanDeviceRead,
     MonthlyPlanPartRead,
+    MonthlyPlanPartQtyDeliveredUpdate,
 )
 from app.services.monthly_plan import generate_monthly_plan as do_generate
 
@@ -87,6 +90,32 @@ async def list_plan_parts(plan_id: int, session: AsyncSession = Depends(get_db))
     return result.scalars().all()
 
 
+@router.patch("/{plan_id}/parts/{plan_part_id}", response_model=MonthlyPlanPartRead)
+async def update_plan_part_qty_delivered(
+    plan_id: int,
+    plan_part_id: int,
+    data: MonthlyPlanPartQtyDeliveredUpdate,
+    session: AsyncSession = Depends(get_db),
+):
+    """Фактически поставленное количество по строке плана (0 … требуется)."""
+    result = await session.execute(
+        select(MonthlyPlanPart).where(
+            MonthlyPlanPart.id == plan_part_id,
+            MonthlyPlanPart.plan_id == plan_id,
+        )
+    )
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "Строка плана не найдена")
+    q = data.qty_delivered
+    if q < 0 or q > row.qty_required:
+        raise HTTPException(400, "Поставлено должно быть от 0 до «Требуется»")
+    row.qty_delivered = q
+    await session.flush()
+    await session.refresh(row)
+    return row
+
+
 @router.get("/{plan_id}/parts-with-coverage")
 async def list_plan_parts_with_coverage(plan_id: int, session: AsyncSession = Depends(get_db)):
     """Returns plan parts with invoice coverage (invoice_no for each part)."""
@@ -95,25 +124,36 @@ async def list_plan_parts_with_coverage(plan_id: int, session: AsyncSession = De
     )
     parts = list(parts_result.scalars().all())
     links_result = await session.execute(
-        select(InvoicePartLink.part_id, InvoicePartLink.invoice_id, Invoice.invoice_no)
+        select(
+            InvoicePartLink.id.label("link_id"),
+            InvoicePartLink.part_id,
+            InvoicePartLink.invoice_id,
+            Invoice.invoice_no,
+        )
         .join(Invoice, Invoice.id == InvoicePartLink.invoice_id)
         .where(InvoicePartLink.plan_id == plan_id)
     )
     invoices_by_part: dict[int, list[dict]] = {p.part_id: [] for p in parts}
     for row in links_result.all():
         invoices_by_part.setdefault(row.part_id, []).append(
-            {"invoice_id": row.invoice_id, "invoice_no": row.invoice_no}
+            {"link_id": row.link_id, "invoice_id": row.invoice_id, "invoice_no": row.invoice_no}
         )
-    return [
-        {
-            "id": p.id,
-            "plan_id": p.plan_id,
-            "part_id": p.part_id,
-            "qty_required": str(p.qty_required),
-            "qty_final": str(p.qty_final),
-            "created_at": p.created_at.isoformat(),
-            "has_invoice": len(invoices_by_part.get(p.part_id, [])) > 0,
-            "invoices": invoices_by_part.get(p.part_id, []),
-        }
-        for p in parts
-    ]
+    out = []
+    for p in parts:
+        qty_del = p.qty_delivered
+        req = p.qty_required
+        out.append(
+            {
+                "id": p.id,
+                "plan_id": p.plan_id,
+                "part_id": p.part_id,
+                "qty_required": str(p.qty_required),
+                "qty_final": str(p.qty_final),
+                "qty_delivered": str(qty_del),
+                "created_at": p.created_at.isoformat(),
+                "has_invoice": len(invoices_by_part.get(p.part_id, [])) > 0,
+                "invoices": invoices_by_part.get(p.part_id, []),
+                "delivery_complete": bool(qty_del >= req),
+            }
+        )
+    return out

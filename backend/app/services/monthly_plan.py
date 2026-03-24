@@ -6,7 +6,17 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models import Order, OrderItem, OrderPartItem, DeviceBomVersion, DeviceBomItem, MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPart
+from app.models import (
+    Order,
+    OrderItem,
+    OrderPartItem,
+    DeviceBomVersion,
+    DeviceBomItem,
+    InvoicePartLink,
+    MonthlyPlan,
+    MonthlyPlanDevice,
+    MonthlyPlanPart,
+)
 
 
 async def generate_monthly_plan(
@@ -20,10 +30,40 @@ async def generate_monthly_plan(
     _, last_day_num = monthrange(month.year, month.month)
     last_day = date(month.year, month.month, last_day_num)
 
-    # Replace: delete existing plan(s) for this month
+    # При replace: сохранить «поставлено» и привязки счетов, затем удалить старые планы месяца
+    delivered_by_part: dict[int, Decimal] = {}
+    links_snapshot: list[tuple[int, int, Decimal | None, Decimal | None, str | None]] = []
+
     if replace:
-        existing = await session.execute(select(MonthlyPlan).where(MonthlyPlan.month == first_day))
-        for plan in existing.scalars().all():
+        existing_result = await session.execute(select(MonthlyPlan).where(MonthlyPlan.month == first_day))
+        existing_plans = list(existing_result.scalars().all())
+        plan_ids = [p.id for p in existing_plans]
+
+        if plan_ids:
+            pp_res = await session.execute(select(MonthlyPlanPart).where(MonthlyPlanPart.plan_id.in_(plan_ids)))
+            for pp in pp_res.scalars().all():
+                prev = delivered_by_part.get(pp.part_id, Decimal("0"))
+                delivered_by_part[pp.part_id] = max(prev, pp.qty_delivered)
+
+            lk_res = await session.execute(
+                select(
+                    InvoicePartLink.invoice_id,
+                    InvoicePartLink.part_id,
+                    InvoicePartLink.qty_covered,
+                    InvoicePartLink.amount_allocated,
+                    InvoicePartLink.note,
+                ).where(InvoicePartLink.plan_id.in_(plan_ids))
+            )
+            seen_ip: set[tuple[int, int]] = set()
+            for row in lk_res.all():
+                key = (row.invoice_id, row.part_id)
+                if key not in seen_ip:
+                    seen_ip.add(key)
+                    links_snapshot.append(
+                        (row.invoice_id, row.part_id, row.qty_covered, row.amount_allocated, row.note)
+                    )
+
+        for plan in existing_plans:
             await session.delete(plan)
         await session.flush()
 
@@ -116,14 +156,35 @@ async def generate_monthly_plan(
     for part_id, qty in direct_part_totals.items():
         part_totals[part_id] = part_totals.get(part_id, Decimal("0")) + qty
 
-    # Create monthly_plan_parts
+    # Create monthly_plan_parts (поставлено переносим с прошлого плана, не больше нового «требуется»)
     for part_id, qty_required in part_totals.items():
+        prev_del = delivered_by_part.get(part_id, Decimal("0"))
+        qty_del = min(prev_del, qty_required)
         session.add(
             MonthlyPlanPart(
                 plan_id=plan.id,
                 part_id=part_id,
                 qty_required=qty_required,
                 qty_final=qty_required,
+                qty_delivered=qty_del,
+            )
+        )
+
+    await session.flush()
+
+    # Восстановить привязки счёт → деталь в плане (только детали, которые есть в новом расчёте)
+    new_part_ids = set(part_totals.keys())
+    for invoice_id, part_id, qty_covered, amount_allocated, note in links_snapshot:
+        if part_id not in new_part_ids:
+            continue
+        session.add(
+            InvoicePartLink(
+                invoice_id=invoice_id,
+                plan_id=plan.id,
+                part_id=part_id,
+                qty_covered=qty_covered,
+                amount_allocated=amount_allocated,
+                note=note,
             )
         )
 

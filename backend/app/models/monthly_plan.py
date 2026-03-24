@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -48,6 +48,7 @@ class MonthlyPlanPart(Base):
     part_id: Mapped[int] = mapped_column(ForeignKey("parts.id", ondelete="CASCADE"), nullable=False)
     qty_required: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     qty_final: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    qty_delivered: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     __table_args__ = (UniqueConstraint("plan_id", "part_id", name="uq_monthly_plan_parts_plan_part"),)

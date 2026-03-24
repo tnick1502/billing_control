@@ -263,9 +263,14 @@ class MonthlyPlanPartRead(BaseModel):
     part_id: int
     qty_required: Decimal
     qty_final: Decimal
+    qty_delivered: Decimal
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: decimal_to_str})
+
+
+class MonthlyPlanPartQtyDeliveredUpdate(BaseModel):
+    qty_delivered: Decimal
 
 
 class InvoiceBase(BaseModel):

@@ -87,6 +87,11 @@ export const api = {
     devices: (planId: number) => fetchApi<MonthlyPlanDevice[]>(`/monthly-plans/${planId}/devices`),
     parts: (planId: number) => fetchApi<MonthlyPlanPart[]>(`/monthly-plans/${planId}/parts`),
     partsWithCoverage: (planId: number) => fetchApi<MonthlyPlanPartWithCoverage[]>(`/monthly-plans/${planId}/parts-with-coverage`),
+    updatePlanPartDelivered: (planId: number, planPartId: number, qty_delivered: string) =>
+      fetchApi<MonthlyPlanPart>(`/monthly-plans/${planId}/parts/${planPartId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ qty_delivered }),
+      }),
   },
   invoices: {
     list: () => fetchApi<Invoice[]>('/invoices'),
@@ -291,15 +296,20 @@ export interface MonthlyPlanPart {
   part_id: number;
   qty_required: string;
   qty_final: string;
+  /** После миграции БД всегда есть; до миграции может отсутствовать */
+  qty_delivered?: string;
   created_at: string;
 }
 export interface PartInvoiceCoverage {
+  link_id: number;
   invoice_id: number;
   invoice_no: string;
 }
 export interface MonthlyPlanPartWithCoverage extends MonthlyPlanPart {
   has_invoice: boolean;
   invoices?: PartInvoiceCoverage[];
+  /** После обновления API; иначе считается по qty_delivered и qty_required */
+  delivery_complete?: boolean;
 }
 
 export interface InvoiceFileInfo {

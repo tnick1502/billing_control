@@ -135,13 +135,27 @@ async def seed_database(session: AsyncSession) -> bool:
 
     # Monthly plan parts (aggregated from BOM)
     session.add_all([
-        MonthlyPlanPart(plan_id=plan.id, part_id=p1.id, qty_required=Decimal("38"), qty_final=Decimal("38")),
-        MonthlyPlanPart(plan_id=plan.id, part_id=p2.id, qty_required=Decimal("38"), qty_final=Decimal("38")),
-        MonthlyPlanPart(plan_id=plan.id, part_id=p3.id, qty_required=Decimal("150"), qty_final=Decimal("150")),
-        MonthlyPlanPart(plan_id=plan.id, part_id=p4.id, qty_required=Decimal("12"), qty_final=Decimal("12")),
-        MonthlyPlanPart(plan_id=plan.id, part_id=p5.id, qty_required=Decimal("30"), qty_final=Decimal("30")),
-        MonthlyPlanPart(plan_id=plan.id, part_id=p6.id, qty_required=Decimal("10"), qty_final=Decimal("10")),
-        MonthlyPlanPart(plan_id=plan.id, part_id=p7.id, qty_required=Decimal("3"), qty_final=Decimal("3")),
+        MonthlyPlanPart(
+            plan_id=plan.id, part_id=p1.id, qty_required=Decimal("38"), qty_final=Decimal("38"), qty_delivered=Decimal("0")
+        ),
+        MonthlyPlanPart(
+            plan_id=plan.id, part_id=p2.id, qty_required=Decimal("38"), qty_final=Decimal("38"), qty_delivered=Decimal("0")
+        ),
+        MonthlyPlanPart(
+            plan_id=plan.id, part_id=p3.id, qty_required=Decimal("150"), qty_final=Decimal("150"), qty_delivered=Decimal("0")
+        ),
+        MonthlyPlanPart(
+            plan_id=plan.id, part_id=p4.id, qty_required=Decimal("12"), qty_final=Decimal("12"), qty_delivered=Decimal("0")
+        ),
+        MonthlyPlanPart(
+            plan_id=plan.id, part_id=p5.id, qty_required=Decimal("30"), qty_final=Decimal("30"), qty_delivered=Decimal("0")
+        ),
+        MonthlyPlanPart(
+            plan_id=plan.id, part_id=p6.id, qty_required=Decimal("10"), qty_final=Decimal("10"), qty_delivered=Decimal("0")
+        ),
+        MonthlyPlanPart(
+            plan_id=plan.id, part_id=p7.id, qty_required=Decimal("3"), qty_final=Decimal("3"), qty_delivered=Decimal("0")
+        ),
     ])
 
     # Invoice
