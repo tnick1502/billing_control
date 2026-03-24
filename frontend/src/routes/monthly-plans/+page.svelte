@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import { formatQty } from '$lib/format';
+  import { formatQty, formatIntegerQty } from '$lib/format';
   import type { MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPartWithCoverage, InvoiceCreate } from '$lib/api';
 
   type PlanDetail = { devices: MonthlyPlanDevice[]; parts: MonthlyPlanPartWithCoverage[] };
@@ -37,7 +37,7 @@
     for (const pl of plans) {
       const det = plansDetail[Number(pl.id)];
       det?.parts?.forEach((p) => {
-        d[p.id] = String(p.qty_delivered ?? '0');
+        d[p.id] = formatIntegerQty(p.qty_delivered);
       });
     }
     deliverDraft = d;
@@ -110,11 +110,11 @@
   }
 
   async function submitDelivered(planId: number, row: MonthlyPlanPartWithCoverage) {
-    const raw = deliverDraft[row.id] ?? String(row.qty_delivered ?? '0');
-    const v = Number(raw);
+    const raw = deliverDraft[row.id] ?? formatIntegerQty(row.qty_delivered);
+    const v = Math.round(Number(raw));
     const max = Number(row.qty_required);
-    if (Number.isNaN(v) || v < 0 || v > max) {
-      alert(`Введите число от 0 до ${formatQty(row.qty_required)}`);
+    if (!Number.isFinite(v) || v < 0 || v > max) {
+      alert(`Введите целое от 0 до ${formatIntegerQty(row.qty_required)}`);
       return;
     }
     savingDeliveredId = row.id;
@@ -328,7 +328,7 @@
                               <input
                                 id="del-{p.id}"
                                 type="number"
-                                step="any"
+                                step="1"
                                 min="0"
                                 max={Number(p.qty_required)}
                                 value={deliverDraft[p.id] ?? ''}
@@ -340,7 +340,7 @@
                                 }}
                                 class="w-28 px-2 py-1.5 bg-zinc-900 border border-zinc-600 rounded text-white text-sm font-mono"
                               />
-                              <span class="text-zinc-500 text-xs ml-1">из {formatQty(p.qty_required)}</span>
+                              <span class="text-zinc-500 text-xs ml-1">из {formatIntegerQty(p.qty_required)}</span>
                             </div>
                             <button
                               type="button"

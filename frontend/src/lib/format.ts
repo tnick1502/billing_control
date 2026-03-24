@@ -1,3 +1,11 @@
+/** Целое число для количеств ввода (убирает хвост .000000 из API) */
+export function formatIntegerQty(val: string | number | null | undefined): string {
+  if (val == null || val === '') return '0';
+  const n = typeof val === 'string' ? parseFloat(val.replace(',', '.')) : val;
+  if (isNaN(n)) return '0';
+  return String(Math.round(n));
+}
+
 /** Format quantity: show as integer when whole, otherwise up to 2 decimals */
 export function formatQty(val: string | number | null | undefined): string {
   if (val == null || val === '') return '—';
