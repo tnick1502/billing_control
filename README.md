@@ -1,44 +1,60 @@
-# MRP BOM Orders Service
+# Billing control (MRP BOM Orders)
 
-Сервис управления заказами, приборами, спецификациями (BOM), месячными планами и счетами с привязкой к S3.
+Веб-приложение для учёта заказов, приборов, спецификаций (BOM), месячных планов и счетов с загрузкой файлов в S3 (MinIO).
 
 ## Стек
 
-- **Backend**: FastAPI, SQLAlchemy (async), PostgreSQL, MinIO (S3)
+- **Backend**: FastAPI, SQLAlchemy (async), PostgreSQL, MinIO (S3-совместимое хранилище)
 - **Frontend**: SvelteKit, Tailwind CSS
-- **Инфраструктура**: Docker, Poetry
+- **Инфраструктура**: Docker Compose, nginx (обратный прокси), Poetry (Python), npm (Node)
 
-## Запуск через Docker
+## Запуск через Docker Compose
+
+Из корня репозитория:
 
 ```bash
-docker compose up --build
+docker compose up --build -d
 ```
 
-- Приложение: http://localhost (через nginx)
-- Backend API: http://localhost:8000
-- MinIO Console: http://localhost:9001 (minioadmin/minioadmin)
+Снаружи публикуются только **80** (nginx) и **5432** (PostgreSQL). Порт **8000** бэкенда на хост не открывается — API доступен только через nginx.
 
-При первом запуске автоматически:
-- создаются таблицы в БД (если их ещё нет)
-- создаётся bucket в MinIO
-- заполняется БД тестовыми данными
+### URL после запуска
 
-**Скачивание файлов счетов:** бэкенд в Docker ходит в MinIO по `http://minio:9000`, а presigned-ссылка для браузера должна быть на доступный с хоста адрес. В `docker-compose` задано `S3_PUBLIC_ENDPOINT_URL=http://localhost:9000`. Если открываете UI не с `localhost`, подставьте свой хост и порт MinIO (например `http://192.168.1.5:9000`).
+| Сервис | Адрес (локально) |
+|--------|------------------|
+| Приложение (UI) | http://localhost/ |
+| OpenAPI / Swagger | http://localhost/api/docs |
+| MinIO Console | http://localhost/minio/ |
+| S3 API (для presigned-ссылок из браузера) | http://localhost/minio-s3/ |
+| Portainer | http://localhost/portainer/ |
+
+MinIO: логин и пароль — **`MINIO_ROOT_USER`** и **`MINIO_ROOT_PASSWORD`** в `.env` (в примере — `minioadmin` / `minioadmin`).
+
+Portainer: логин **`admin`**, пароль — **`PORTAINER_ADMIN_PASSWORD`** в `.env` (действует только при первом создании данных Portainer; иначе пароль меняется в UI).
+
+### Переменные окружения (`.env`)
+
+Compose подхватывает файл **`.env`** в корне репозитория. Шаблон — **`.env.example`**.
+
+На сервере или при доступе не с `localhost` задайте, как минимум:
+
+- **`PUBLIC_ORIGIN`** — публичный URL без слэша в конце, например `http://203.0.113.10` или `https://example.com`. Нужен для MinIO Console, presigned URL и `ORIGIN` фронтенда.
+- **`S3_PUBLIC_ENDPOINT_URL`** — тот же хост + путь к S3 за nginx, например `http://203.0.113.10/minio-s3`.
+- **`CORS_ORIGINS`** — список через запятую: ваш UI и при необходимости `PUBLIC_ORIGIN`.
+- **`MINIO_ROOT_USER`** / **`MINIO_ROOT_PASSWORD`** — MinIO и ключи S3 для бэкенда.
+- **`PORTAINER_ADMIN_PASSWORD`** — начальный пароль администратора Portainer (см. таблицу URL).
+
+Иначе ссылки «Скачать» и консоль MinIO могут указывать на неверный хост.
+
+### Первый запуск
+
+При старте бэкенда (если включён сид):
+
+- создаются таблицы в БД (при отсутствии);
+- создаётся bucket в MinIO;
+- при необходимости заполняется БД тестовыми данными.
 
 ## Локальная разработка
-
-### Backend
-
-```bash
-cd backend
-poetry install
-# Запустить PostgreSQL и MinIO: docker compose up postgres minio -d
-export DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/mrp_bom_orders
-export S3_ENDPOINT_URL=http://localhost:9000
-poetry run uvicorn app.main:app --reload
-```
-
-Схема БД создаётся при старте приложения (`create_all`). Для изменения структуры таблиц правьте модели и пересоздайте БД или примените SQL вручную.
 
 ### Frontend
 
@@ -48,12 +64,48 @@ npm install
 npm run dev
 ```
 
-Frontend на http://localhost:5173 проксирует `/api` на backend.
+Dev-сервер: http://localhost:5173. В `vite.config.ts` запросы **`/api/*`** проксируются на **`http://localhost:8000`** (префикс `/api` снимается).
 
-## API
+### Backend
 
-- `GET /stats/orders-devices-timeseries?date_from=&date_to=` — ряды по датам заказа и приборам за период
-- `GET /stats/orders-parts-timeseries?part_id=&date_from=&date_to=` — ряды по прямым заказам детали за период
+```bash
+cd backend
+poetry install
+```
+
+Нужен работающий **PostgreSQL**. Из корня репозитория:
+
+```bash
+docker compose up postgres -d
+```
+
+**MinIO:** в текущем `docker-compose.yml` порты MinIO на хост **не проброшены** — доступ к API и консоли идёт через nginx на порту 80. Для локального **uvicorn** на машине удобно поднять MinIO отдельно с публикацией портов, например:
+
+```bash
+docker run -d --name minio-dev -p 9000:9000 -p 9001:9001 \
+  -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+  minio/minio server /data --console-address ":9001"
+```
+
+Далее:
+
+```bash
+export DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/mrp_bom_orders
+export S3_ENDPOINT_URL=http://localhost:9000
+export S3_PUBLIC_ENDPOINT_URL=http://localhost:9000
+poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Схема БД поднимается при старте приложения. Изменения моделей при разработке обычно сопровождают ручным SQL или пересозданием БД.
+
+## Скрипт `hard_start.sh`
+
+Агрессивно очищает локальный Docker (контейнеры, образы, prune), делает `git pull` и поднимает стек. Используйте только если осознаёте последствия для **всех** образов/контейнеров на машине.
+
+## API (кратко)
+
+Базовый префикс за nginx: **`/api/`** (внутри контейнера бэкенд слушает корень).
+
 - `GET /health` — проверка
 - `GET/POST /devices` — приборы
 - `GET/POST /parts` — детали
@@ -63,3 +115,7 @@ Frontend на http://localhost:5173 проксирует `/api` на backend.
 - `POST /monthly-plans/generate` — генерация плана по заказам
 - `GET/POST /invoices` — счета
 - `POST /invoices/{id}/upload` — загрузка файла счёта в S3
+- `GET /stats/orders-devices-timeseries?date_from=&date_to=` — ряды по заказам и приборам
+- `GET /stats/orders-parts-timeseries?part_id=&date_from=&date_to=` — ряды по заказам детали
+
+Полная схема — в **http://localhost/api/docs** после запуска compose.
