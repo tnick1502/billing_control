@@ -63,5 +63,17 @@ services:
       - backend
       - frontend
 
+  # Веб-дашборд Docker: контейнеры, логи, старт/стоп (https://docs.portainer.io)
+  # UI: https://<хост>:9443 — при первом заходе задаёте админа. Не открывайте порт в интернет без ограничения (файрвол/VPN).
+  portainer:
+    image: portainer/portainer-ce:latest
+    restart: unless-stopped
+    ports:
+      - "9443:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+
 volumes:
   miniodata:
+  portainer_data:

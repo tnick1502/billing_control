@@ -39,7 +39,8 @@ async def lifespan(app: FastAPI):
                 print(f"Seed warning: {e}")
 
     yield
-    # shutdown
+
+    await engine.dispose()
 
 
 app = FastAPI(
