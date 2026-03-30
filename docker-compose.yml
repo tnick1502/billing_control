@@ -41,8 +41,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    ports:
-      - "8000:8000"
+    # Без публикации 8000 на хост: API только для nginx внутри compose (иначе боты и сканы на :8000).
+    # Снаружи: http://<сервер>/api/…  ·  Swagger: http://<сервер>/api/docs
 
   frontend:
     build:
