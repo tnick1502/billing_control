@@ -15,6 +15,9 @@ build/
 .env.*
 !.env.example
 
+# Portainer начальный пароль (генерируется из .env скриптом)
+portainer_admin_password
+
 # IDE
 .idea/
 .vscode/

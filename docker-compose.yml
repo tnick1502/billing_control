@@ -68,19 +68,17 @@ services:
       - portainer
 
   # Дашборд Docker: http://<сервер>/portainer/
+  # Образ Portainer без /bin/sh — пароль только через файл (см. scripts/sync-portainer-password-from-env.py).
   portainer:
     image: portainer/portainer-ce:latest
     restart: unless-stopped
-    environment:
-      PORTAINER_ADMIN_PASSWORD: ${PORTAINER_ADMIN_PASSWORD:-changeme}
-    entrypoint: ["/bin/sh", "-c"]
     command:
-      - |
-        echo -n "$$PORTAINER_ADMIN_PASSWORD" > /tmp/portainer_admin_pass
-        exec /portainer --admin-password-file=/tmp/portainer_admin_pass --base-url=/portainer
+      - --admin-password-file=/tmp/portainer_admin_pass
+      - --base-url=/portainer
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
+      - ./portainer_admin_password:/tmp/portainer_admin_pass:ro
 
 volumes:
   miniodata:
