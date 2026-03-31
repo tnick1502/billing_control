@@ -40,6 +40,7 @@ services:
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       S3_BUCKET: invoices
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000,http://localhost}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost}
       SEED_ON_STARTUP: "true"
     depends_on:
       postgres:
@@ -50,7 +51,8 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     environment:
-      ORIGIN: ${PUBLIC_ORIGIN:-http://localhost}
+      PROTOCOL_HEADER: x-forwarded-proto
+      HOST_HEADER: x-forwarded-host
     depends_on:
       - backend
 

@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     s3_bucket: str = "invoices"
     s3_region: str = "us-east-1"
 
-    # App
+    # App (PUBLIC_ORIGIN добавляется к CORS в main, если задан — удобно при доступе не с localhost)
+    public_origin: str | None = None
     cors_origins: str = "http://localhost:5173,http://localhost:3000,http://localhost"
     seed_on_startup: bool = True
 

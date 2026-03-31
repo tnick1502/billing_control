@@ -6,10 +6,18 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
-from app.api import devices, parts, orders, bom, monthly_plans, invoices, files, stats
+from app.api import bom, devices, files, invoices, monthly_plans, orders, parts, stats
 from app.database import Base, async_session_maker, engine
 from app.schema_ensure import ensure_schema
 from app.seeds.init_data import seed_database
+
+
+def _cors_allow_origins() -> list[str]:
+    origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+    extra = (settings.public_origin or "").strip().rstrip("/")
+    if extra and extra not in origins:
+        origins.append(extra)
+    return origins
 
 
 @asynccontextmanager
@@ -52,7 +60,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins.split(","),
+    allow_origins=_cors_allow_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
