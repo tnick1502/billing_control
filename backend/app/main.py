@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
     if settings.seed_on_startup:
         async with async_session_maker() as session:
             try:
-                seeded = await seed_database(session)
+                seeded = await seed_database(session, force=settings.force_reseed)
                 await session.commit()
                 if seeded:
                     print("Database seeded with test data")

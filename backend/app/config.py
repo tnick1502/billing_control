@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     public_origin: str | None = None
     cors_origins: str = "http://localhost:5173,http://localhost:3000,http://localhost"
     seed_on_startup: bool = True
+    force_reseed: bool = False
 
 
 settings = Settings()

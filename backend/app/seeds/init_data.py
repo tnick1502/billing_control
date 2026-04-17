@@ -2,7 +2,7 @@ import io
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -26,11 +26,26 @@ from app.models import (
 from app.services.s3_service import upload_file
 
 
-async def seed_database(session: AsyncSession) -> bool:
+async def clear_database(session: AsyncSession) -> None:
+    """Truncate all tables in correct order."""
+    await session.execute(text(
+        "TRUNCATE TABLE invoice_files, invoice_part_links, monthly_plan_part_files, "
+        "monthly_plan_parts, monthly_plan_devices, monthly_plans, "
+        "order_part_items, order_items, orders, "
+        "device_bom_items, device_bom_versions, device_aliases, "
+        "invoices, files, devices, parts RESTART IDENTITY CASCADE"
+    ))
+    await session.flush()
+
+
+async def seed_database(session: AsyncSession, force: bool = False) -> bool:
     """Seed database with test data. Returns True if data was seeded, False if already populated."""
     result = await session.execute(select(Device).limit(1))
-    if result.scalar_one_or_none() is not None:
+    already_populated = result.scalar_one_or_none() is not None
+    if already_populated and not force:
         return False
+    if already_populated and force:
+        await clear_database(session)
 
     # Devices
     d1 = Device(primary_name="Датчик температуры Т-100", model="T-100", description="Промышленный датчик температуры", is_active=True)
