@@ -40,6 +40,8 @@
   let editInvoiceForm: InvoiceCreate = emptyInvoiceForm();
   let editInvoiceLinkQty = '';
   let expandedInvoiceLinks: Record<number, boolean> = {};
+  let expandedPlans: Record<number, boolean> = {};
+  let planExpansionInitialized = false;
 
   function refreshDeliverDrafts() {
     const d: Record<number, string> = {};
@@ -84,6 +86,7 @@
       }
       plans = list;
       plansDetail = next;
+      syncPlanExpansion(list);
       refreshDeliverDrafts();
     } catch (e) {
       console.error(e);
@@ -172,6 +175,46 @@
 
   function toggleInvoiceDetails(linkId: number) {
     expandedInvoiceLinks = { ...expandedInvoiceLinks, [linkId]: !expandedInvoiceLinks[linkId] };
+  }
+
+  function planMonthKey(plan: MonthlyPlan) {
+    return String(plan.month).slice(0, 7);
+  }
+
+  function latestEffectivePlanId(list: MonthlyPlan[]) {
+    if (list.length === 0) return null;
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    const candidates = list.filter((plan) => planMonthKey(plan) <= currentMonth);
+    const source = candidates.length > 0 ? candidates : list;
+    return [...source].sort((a, b) => planMonthKey(b).localeCompare(planMonthKey(a)))[0]?.id ?? null;
+  }
+
+  function syncPlanExpansion(list: MonthlyPlan[]) {
+    if (!planExpansionInitialized) {
+      const latestId = latestEffectivePlanId(list);
+      expandedPlans = latestId ? { [latestId]: true } : {};
+      planExpansionInitialized = true;
+      return;
+    }
+
+    const validIds = new Set(list.map((plan) => Number(plan.id)));
+    const next: Record<number, boolean> = {};
+    for (const [id, expanded] of Object.entries(expandedPlans)) {
+      const numericId = Number(id);
+      if (validIds.has(numericId)) next[numericId] = expanded;
+    }
+    expandedPlans = next;
+  }
+
+  function togglePlan(planId: number) {
+    expandedPlans = { ...expandedPlans, [planId]: !expandedPlans[planId] };
+  }
+
+  function handlePlanHeaderKeydown(event: KeyboardEvent, planId: number) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      togglePlan(planId);
+    }
   }
 
   function planPart(planId: number | null, partId: number) {
@@ -328,14 +371,25 @@
     <div class="space-y-6">
       {#each plans as plan (plan.id)}
         {@const data = plansDetail[Number(plan.id)]}
+        {@const expanded = expandedPlans[Number(plan.id)]}
         <div class="bg-surface-800 rounded-xl border border-zinc-700 overflow-hidden">
-          <div class="px-6 py-4 border-b border-zinc-700 flex justify-between items-center">
-            <h2 class="text-lg font-semibold text-white">
-              {new Date(plan.month).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}
-            </h2>
+          <div
+            class="px-6 py-3 flex justify-between items-center gap-3 cursor-pointer hover:bg-zinc-800/60 {expanded ? 'border-b border-zinc-700' : ''}"
+            on:click={() => togglePlan(Number(plan.id))}
+            on:keydown={(event) => handlePlanHeaderKeydown(event, Number(plan.id))}
+            role="button"
+            tabindex="0"
+            aria-expanded={expanded}
+          >
+            <div class="flex min-w-0 items-center gap-3">
+              <span class="font-mono text-zinc-400">{expanded ? '▾' : '▸'}</span>
+              <h2 class="truncate text-lg font-semibold text-white">
+                {new Date(plan.month).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' })}
+              </h2>
+            </div>
             <button
               type="button"
-              on:click={() => updatePlan(plan)}
+              on:click|stopPropagation={() => updatePlan(plan)}
               disabled={updatingPlanId === plan.id}
               class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 disabled:opacity-50 text-sm"
             >
@@ -343,8 +397,7 @@
             </button>
           </div>
 
-          {#if data}
-            {@const uncovered = (data.parts ?? []).filter((p) => !coverageOk(p))}
+          {#if expanded && data}
             <div class="p-6">
               <h3 class="text-sm font-medium text-zinc-400 mb-2">Приборы</h3>
               <table class="w-full mb-6 rounded-xl border border-zinc-700 overflow-hidden">
@@ -503,24 +556,6 @@
                   {/each}
                 </tbody>
               </table>
-              {#if uncovered.length > 0}
-                <div class="mt-4 flex gap-2 flex-wrap">
-                  <button
-                    type="button"
-                    on:click={() => openLinkModal(plan.id, uncovered.map((x) => x.part_id))}
-                    class="px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 text-sm"
-                  >
-                    Привязать к существующему счёту ({uncovered.length})
-                  </button>
-                  <button
-                    type="button"
-                    on:click={() => openCreateInvoiceModal(plan.id, uncovered.map((x) => x.part_id))}
-                    class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 text-sm"
-                  >
-                    Создать счёт и привязать ({uncovered.length})
-                  </button>
-                </div>
-              {/if}
             </div>
           {/if}
         </div>

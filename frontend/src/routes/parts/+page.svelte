@@ -8,6 +8,9 @@
   let modalOpen = false;
   let form: PartCreate = { name: '', cipher: null, article: null, description: null };
   let editingId: number | null = null;
+  let searchQuery = '';
+
+  $: filteredParts = filterParts(parts, searchQuery);
 
   onMount(load);
 
@@ -34,6 +37,22 @@
     modalOpen = true;
   }
 
+  function filterParts(items: Part[], query: string) {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return items;
+    return items.filter((p) => {
+      const haystack = `${p.name ?? ''} ${p.cipher ?? ''} ${p.article ?? ''} ${p.description ?? ''}`.toLowerCase();
+      return haystack.includes(needle);
+    });
+  }
+
+  function handleRowKeydown(event: KeyboardEvent, part: Part) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      openEdit(part);
+    }
+  }
+
   async function save() {
     try {
       if (editingId) {
@@ -52,6 +71,8 @@
     if (!confirm('Удалить деталь?')) return;
     try {
       await api.parts.delete(id);
+      modalOpen = false;
+      editingId = null;
       load();
     } catch (e) {
       alert((e as Error).message);
@@ -67,6 +88,16 @@
     </button>
   </div>
 
+  <div class="mb-4 rounded-xl border border-zinc-700 bg-surface-800 p-4">
+    <label class="block text-xs text-zinc-400 mb-1" for="part-search">Поиск по деталям</label>
+    <input
+      id="part-search"
+      bind:value={searchQuery}
+      placeholder="Название, шифр, артикул, описание..."
+      class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
+    />
+  </div>
+
   {#if loading}
     <p class="text-zinc-400">Загрузка...</p>
   {:else}
@@ -79,25 +110,29 @@
             <th class="px-4 py-3 font-medium">Шифр</th>
             <th class="px-4 py-3 font-medium">Артикул</th>
             <th class="px-4 py-3 font-medium">Описание</th>
-            <th class="px-4 py-3 w-24"></th>
           </tr>
         </thead>
         <tbody class="divide-y divide-zinc-800">
-          {#each parts as p}
-            <tr class="hover:bg-zinc-800/50">
+          {#each filteredParts as p}
+            <tr
+              class="cursor-pointer hover:bg-zinc-800/50"
+              on:click={() => openEdit(p)}
+              on:keydown={(event) => handleRowKeydown(event, p)}
+              role="button"
+              tabindex="0"
+            >
               <td class="px-4 py-3 font-mono text-sm">{p.id ?? '—'}</td>
               <td class="px-4 py-3">{p.name}</td>
               <td class="px-4 py-3 text-zinc-300">{p.cipher || '—'}</td>
               <td class="px-4 py-3 text-zinc-300">{p.article || '—'}</td>
               <td class="px-4 py-3 text-zinc-400 max-w-xs truncate">{p.description || '—'}</td>
-              <td class="px-4 py-3">
-                <button on:click={() => openEdit(p)} class="text-amber-500 hover:text-amber-400 mr-2">Изм.</button>
-                <button on:click={() => remove(p.id)} class="text-red-400 hover:text-red-300">Удал.</button>
-              </td>
             </tr>
           {/each}
         </tbody>
       </table>
+      {#if filteredParts.length === 0}
+        <div class="px-4 py-6 text-center text-zinc-400">Ничего не найдено.</div>
+      {/if}
     </div>
   {/if}
 </div>
@@ -132,6 +167,9 @@
         <div class="flex gap-2 pt-2">
           <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Сохранить</button>
           <button type="button" on:click={() => modalOpen = false} class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600">Отмена</button>
+          {#if editingId}
+            <button type="button" on:click={() => remove(editingId)} class="ml-auto px-4 py-2 bg-red-700 text-white rounded-lg hover:bg-red-600">Удалить</button>
+          {/if}
         </div>
       </form>
     </div>

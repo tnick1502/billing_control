@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { api } from '$lib/api';
-  import type { Part, StatsChartPayload } from '$lib/api';
+  import type { StatsChartPayload } from '$lib/api';
   import type { Chart as ChartType } from 'chart.js';
 
   let deviceCanvas: HTMLCanvasElement;
@@ -10,15 +10,11 @@
   let deviceChart: ChartType | null = null;
   let partChart: ChartType | null = null;
 
-  let parts: Part[] = [];
-  /** Строка — как value у &lt;option&gt;, иначе bind ломается */
-  let selectedPartId = '';
-
   /** Период для графика приборов: YYYY-MM */
   let deviceMonthFrom = '';
   let deviceMonthTo = '';
-  let partDateFrom = '';
-  let partDateTo = '';
+  let partMonthFrom = '';
+  let partMonthTo = '';
 
   let loadingDevices = true;
   /** Нет строк в ответе за период */
@@ -28,15 +24,17 @@
   let loadingPart = false;
   let partError = '';
   let partSeriesEmpty = false;
+  let devicePayload: StatsChartPayload | null = null;
+  let partPayload: StatsChartPayload | null = null;
+  let selectedDeviceIds: number[] = [];
+  let selectedPartIds: number[] = [];
+  let selectorModal: 'devices' | 'parts' | null = null;
+  let selectorSearch = '';
 
-  function defaultDateRange() {
-    const today = new Date();
-    const to = today.toISOString().slice(0, 10);
-    const f = new Date(today);
-    f.setFullYear(f.getFullYear() - 1);
-    const from = f.toISOString().slice(0, 10);
-    return { from, to };
-  }
+  $: selectorPayload = selectorModal === 'devices' ? devicePayload : selectorModal === 'parts' ? partPayload : null;
+  $: selectorOptions = selectorPayload?.datasets ?? [];
+  $: selectorFilteredOptions = filterSelectorOptions(selectorOptions, selectorSearch);
+  $: selectorSelectedIds = selectorModal === 'devices' ? selectedDeviceIds : selectedPartIds;
 
   /** Последние 12 календарных месяцев (включая текущий) */
   function defaultMonthRange() {
@@ -58,11 +56,6 @@
   }
 
   const MONTHS_RU = ['янв.', 'фев.', 'мар.', 'апр.', 'май', 'июн.', 'июл.', 'авг.', 'сен.', 'окт.', 'ноя.', 'дек.'];
-
-  function formatAxisDate(iso: string) {
-    const [y, m, d] = iso.split('-');
-    return `${d}.${m}.${y}`;
-  }
 
   /** Подпись оси для месячных меток (YYYY-MM-01 с бэкенда) */
   function formatAxisMonth(iso: string) {
@@ -113,8 +106,95 @@
     return n <= 1 ? 10 : 4;
   }
 
+  function datasetId(kind: 'devices' | 'parts', ds: StatsChartPayload['datasets'][number]) {
+    return kind === 'devices' ? ds.device_id : ds.part_id;
+  }
+
+  function selectedIdsFor(kind: 'devices' | 'parts') {
+    return kind === 'devices' ? selectedDeviceIds : selectedPartIds;
+  }
+
+  function setSelectedIds(kind: 'devices' | 'parts', ids: number[]) {
+    if (kind === 'devices') {
+      selectedDeviceIds = ids;
+    } else {
+      selectedPartIds = ids;
+    }
+  }
+
+  function allDatasetIds(kind: 'devices' | 'parts', payload: StatsChartPayload | null) {
+    return (payload?.datasets ?? [])
+      .map((ds) => datasetId(kind, ds))
+      .filter((id): id is number => typeof id === 'number');
+  }
+
+  function syncSelection(kind: 'devices' | 'parts', payload: StatsChartPayload) {
+    const available = allDatasetIds(kind, payload);
+    const current = selectedIdsFor(kind).filter((id) => available.includes(id));
+    setSelectedIds(kind, current.length > 0 ? current : available);
+  }
+
+  function filteredPayload(kind: 'devices' | 'parts', payload: StatsChartPayload | null): StatsChartPayload {
+    if (!payload) return { labels: [], datasets: [] };
+    const selected = new Set(selectedIdsFor(kind));
+    return {
+      labels: payload.labels,
+      datasets: payload.datasets.filter((ds) => {
+        const id = datasetId(kind, ds);
+        return typeof id === 'number' && selected.has(id);
+      }),
+    };
+  }
+
+  function filterSelectorOptions(items: StatsChartPayload['datasets'], query: string) {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return items;
+    return items.filter((ds) => ds.label.toLowerCase().includes(needle));
+  }
+
+  function openSelector(kind: 'devices' | 'parts') {
+    selectorModal = kind;
+    selectorSearch = '';
+  }
+
+  function closeSelector() {
+    selectorModal = null;
+    selectorSearch = '';
+  }
+
+  function toggleSelectorItem(kind: 'devices' | 'parts', id: number, checked: boolean) {
+    const current = selectedIdsFor(kind);
+    if (checked) {
+      setSelectedIds(kind, current.includes(id) ? current : [...current, id]);
+    } else {
+      setSelectedIds(kind, current.filter((x) => x !== id));
+    }
+    void rerenderChart(kind);
+  }
+
+  function selectAll(kind: 'devices' | 'parts') {
+    const payload = kind === 'devices' ? devicePayload : partPayload;
+    setSelectedIds(kind, allDatasetIds(kind, payload));
+    void rerenderChart(kind);
+  }
+
+  function clearAll(kind: 'devices' | 'parts') {
+    setSelectedIds(kind, []);
+    void rerenderChart(kind);
+  }
+
+  async function rerenderChart(kind: 'devices' | 'parts') {
+    const mod = await import('chart.js');
+    const Chart = mod.Chart;
+    if (kind === 'devices') {
+      await renderDeviceChart(filteredPayload('devices', devicePayload), Chart);
+    } else {
+      await renderPartChart(filteredPayload('parts', partPayload), Chart);
+    }
+  }
+
   async function renderDeviceChart(payload: StatsChartPayload, Chart: typeof import('chart.js').Chart) {
-    devicesEmpty = payload.labels.length === 0;
+    devicesEmpty = payload.labels.length === 0 || payload.datasets.length === 0;
     const n = payload.labels.length;
     const pr = pointRadiusForCount(n);
 
@@ -122,7 +202,7 @@
     if (!deviceCanvas) return;
     deviceChart?.destroy();
     deviceChart = null;
-    if (devicesEmpty) return;
+    if (devicesEmpty || payload.datasets.length === 0) return;
 
     deviceChart = new Chart(deviceCanvas, {
       type: 'line',
@@ -145,7 +225,7 @@
   }
 
   async function renderPartChart(payload: StatsChartPayload, Chart: typeof import('chart.js').Chart) {
-    partSeriesEmpty = payload.labels.length === 0;
+    partSeriesEmpty = payload.labels.length === 0 || payload.datasets.length === 0;
     const n = payload.labels.length;
     const pr = pointRadiusForCount(n);
 
@@ -155,26 +235,23 @@
     partChart = null;
     if (partSeriesEmpty) return;
 
-    const ds = payload.datasets[0];
     partChart = new Chart(partCanvas, {
       type: 'line',
       data: {
-        labels: payload.labels.map(formatAxisDate),
-        datasets: [
-          {
-            label: ds.label,
-            data: ds.data,
-            borderColor: ds.borderColor ?? 'rgb(245, 158, 11)',
-            backgroundColor: ds.backgroundColor ?? 'rgba(245, 158, 11, 0.15)',
-            fill: true,
-            tension: n <= 1 ? 0 : 0.25,
-            pointRadius: pr,
-            pointHoverRadius: pr + 2,
-            borderWidth: 2,
-          },
-        ],
+        labels: payload.labels.map(formatAxisMonth),
+        datasets: payload.datasets.map((ds) => ({
+          label: ds.label,
+          data: ds.data,
+          borderColor: ds.borderColor ?? 'rgb(245, 158, 11)',
+          backgroundColor: ds.backgroundColor,
+          fill: false,
+          tension: n <= 1 ? 0 : 0.25,
+          pointRadius: pr,
+          pointHoverRadius: pr + 2,
+          borderWidth: 2,
+        })),
       },
-      options: buildChartOptions(`Деталь «${(payload as { part_name: string }).part_name}»: заказано по датам`),
+      options: buildChartOptions('Заказы деталей: сумма по календарным месяцам'),
     });
   }
 
@@ -194,7 +271,9 @@
       const Chart = mod.Chart;
       const { dateFrom, dateTo } = monthRangeToApiDates(deviceMonthFrom, deviceMonthTo);
       const payload = await api.stats.ordersDevicesTimeseries(dateFrom, dateTo);
-      await renderDeviceChart(payload, Chart);
+      devicePayload = payload;
+      syncSelection('devices', payload);
+      await renderDeviceChart(filteredPayload('devices', devicePayload), Chart);
     } catch (e) {
       console.error(e);
       deviceError = (e as Error).message;
@@ -207,8 +286,12 @@
   }
 
   async function loadPartSeries() {
-    if (!selectedPartId || !partDateFrom || !partDateTo) {
-      partError = 'Выберите деталь и период';
+    if (!partMonthFrom || !partMonthTo) {
+      partError = 'Укажите период (месяцы)';
+      return;
+    }
+    if (partMonthFrom > partMonthTo) {
+      partError = 'Месяц «с» не может быть позже «по»';
       return;
     }
     partError = '';
@@ -216,8 +299,11 @@
     try {
       const mod = await import('chart.js');
       const Chart = mod.Chart;
-      const payload = await api.stats.ordersPartsTimeseries(Number(selectedPartId), partDateFrom, partDateTo);
-      await renderPartChart(payload, Chart);
+      const { dateFrom, dateTo } = monthRangeToApiDates(partMonthFrom, partMonthTo);
+      const payload = await api.stats.ordersPartsMonthlyTimeseries(dateFrom, dateTo);
+      partPayload = payload;
+      syncSelection('parts', payload);
+      await renderPartChart(filteredPayload('parts', partPayload), Chart);
     } catch (e) {
       partError = (e as Error).message;
       partChart?.destroy();
@@ -229,19 +315,11 @@
 
   onMount(() => {
     (async () => {
-      const { from: df, to: dt } = defaultDateRange();
       const { from: mf, to: mt } = defaultMonthRange();
       deviceMonthFrom = mf;
       deviceMonthTo = mt;
-      partDateFrom = df;
-      partDateTo = dt;
-
-      try {
-        parts = await api.parts.list();
-        if (parts.length) selectedPartId = String(parts[0].id);
-      } catch {
-        parts = [];
-      }
+      partMonthFrom = mf;
+      partMonthTo = mt;
 
       await tick();
 
@@ -250,11 +328,7 @@
       chartJsDefaults(mod.Chart);
 
       await loadDeviceSeries();
-
-      await tick();
-      if (parts.length && selectedPartId) {
-        await loadPartSeries();
-      }
+      await loadPartSeries();
     })();
   });
 
@@ -270,8 +344,7 @@
   <section class="bg-surface-800 border border-zinc-700 rounded-xl p-6">
     <h2 class="text-lg font-semibold text-white mb-4">Заказы приборов</h2>
     <p class="text-sm text-zinc-400 mb-4">
-      По каждому прибору суммируется количество за календарный месяц (все заказы за март и т.д.). Если заказы были только в одном
-      месяце — на графике одна точка.
+      По каждому прибору суммируется количество за календарный месяц
     </p>
 
     <div class="flex flex-wrap gap-4 items-end mb-6">
@@ -299,6 +372,14 @@
       >
         {loadingDevices ? 'Загрузка…' : 'Показать'}
       </button>
+      <button
+        type="button"
+        on:click={() => openSelector('devices')}
+        disabled={!devicePayload?.datasets.length}
+        class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600 disabled:opacity-50"
+      >
+        Приборы: {selectedDeviceIds.length}/{devicePayload?.datasets.length ?? 0}
+      </button>
     </div>
 
     {#if deviceError}
@@ -307,6 +388,8 @@
 
     {#if loadingDevices}
       <p class="text-zinc-400 mb-4">Загрузка…</p>
+    {:else if selectedDeviceIds.length === 0 && devicePayload?.datasets.length}
+      <p class="text-zinc-400 mb-4">Не выбраны приборы для отображения.</p>
     {:else if devicesEmpty && !deviceError}
       <p class="text-zinc-400 mb-4">Нет данных по заказам приборов за выбранный период.</p>
     {/if}
@@ -318,38 +401,35 @@
   </section>
 
   <section class="bg-surface-800 border border-zinc-700 rounded-xl p-6">
-    <h2 class="text-lg font-semibold text-white mb-4">Заказы деталей (прямые позиции в заказе)</h2>
+    <h2 class="text-lg font-semibold text-white mb-4">Заказы деталей</h2>
     <p class="text-sm text-zinc-400 mb-4">
-      Сумма по дате заказа: прямые позиции «деталь в заказе» + расход по спецификации (BOM) из заказов приборов.
+      По каждой детали суммируется количество за календарный месяц
     </p>
 
     <div class="flex flex-wrap gap-4 items-end mb-6">
       <div>
-        <label class="block text-sm text-zinc-400 mb-1">Деталь</label>
-        <select
-          bind:value={selectedPartId}
-          class="min-w-[220px] px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
-        >
-          {#each parts as p}
-            <option value={String(p.id)}>{p.name}</option>
-          {/each}
-        </select>
+        <label class="block text-sm text-zinc-400 mb-1">Месяц с</label>
+        <input type="month" bind:value={partMonthFrom} class="px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
       </div>
       <div>
-        <label class="block text-sm text-zinc-400 mb-1">Дата с</label>
-        <input type="date" bind:value={partDateFrom} class="px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
-      </div>
-      <div>
-        <label class="block text-sm text-zinc-400 mb-1">Дата по</label>
-        <input type="date" bind:value={partDateTo} class="px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        <label class="block text-sm text-zinc-400 mb-1">Месяц по</label>
+        <input type="month" bind:value={partMonthTo} class="px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
       </div>
       <button
         type="button"
         on:click={loadPartSeries}
-        disabled={loadingPart || !parts.length}
+        disabled={loadingPart}
         class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400 disabled:opacity-50"
       >
         {loadingPart ? 'Загрузка…' : 'Показать'}
+      </button>
+      <button
+        type="button"
+        on:click={() => openSelector('parts')}
+        disabled={!partPayload?.datasets.length}
+        class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600 disabled:opacity-50"
+      >
+        Детали: {selectedPartIds.length}/{partPayload?.datasets.length ?? 0}
       </button>
     </div>
 
@@ -357,15 +437,78 @@
       <p class="text-red-400 text-sm mb-4">{partError}</p>
     {/if}
 
-    {#if !parts.length}
-      <p class="text-zinc-400">Нет деталей в справочнике.</p>
-    {:else}
-      {#if partSeriesEmpty && !loadingPart && !partError}
-        <p class="text-zinc-400">Нет заказов выбранной детали за этот период.</p>
-      {/if}
-      <div class="h-80 w-full" class:hidden={partSeriesEmpty && !loadingPart && !partError}>
-        <canvas bind:this={partCanvas} class="w-full h-full"></canvas>
-      </div>
+    {#if loadingPart}
+      <p class="text-zinc-400 mb-4">Загрузка…</p>
+    {:else if selectedPartIds.length === 0 && partPayload?.datasets.length}
+      <p class="text-zinc-400">Не выбраны детали для отображения.</p>
+    {:else if partSeriesEmpty && !partError}
+      <p class="text-zinc-400">Нет заказов деталей за выбранный период.</p>
     {/if}
+    <div class="h-80 w-full" class:hidden={partSeriesEmpty && !loadingPart && !partError}>
+      <canvas bind:this={partCanvas} class="w-full h-full"></canvas>
+    </div>
   </section>
 </div>
+
+{#if selectorModal}
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" on:click={closeSelector} role="button" tabindex="0">
+    <div class="w-full max-w-xl rounded-xl border border-zinc-700 bg-surface-800 p-6 shadow-xl" on:click|stopPropagation role="dialog">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h2 class="text-lg font-semibold text-white">
+            {selectorModal === 'devices' ? 'Выбор приборов' : 'Выбор деталей'}
+          </h2>
+          <p class="text-sm text-zinc-400">
+            Выбрано {selectorSelectedIds.length} из {selectorOptions.length}
+          </p>
+        </div>
+        <button type="button" on:click={closeSelector} class="px-3 py-1.5 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600">
+          Закрыть
+        </button>
+      </div>
+
+      <input
+        bind:value={selectorSearch}
+        placeholder={selectorModal === 'devices' ? 'Поиск прибора...' : 'Поиск детали...'}
+        class="mb-3 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+      />
+
+      <div class="mb-3 flex flex-wrap gap-2">
+        <button type="button" on:click={() => selectAll(selectorModal)} class="px-3 py-1.5 bg-emerald-700 text-white rounded-lg hover:bg-emerald-600">
+          Выбрать все
+        </button>
+        <button type="button" on:click={() => clearAll(selectorModal)} class="px-3 py-1.5 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600">
+          Снять все
+        </button>
+      </div>
+
+      <div class="max-h-[55vh] overflow-auto rounded-lg border border-zinc-700">
+        {#if selectorFilteredOptions.length === 0}
+          <div class="px-4 py-6 text-center text-zinc-400">Ничего не найдено.</div>
+        {:else}
+          <div class="divide-y divide-zinc-800">
+            {#each selectorFilteredOptions as ds}
+              {@const id = datasetId(selectorModal, ds)}
+              {#if typeof id === 'number'}
+                <label class="flex cursor-pointer items-center gap-3 px-4 py-2 hover:bg-zinc-800/60">
+                  <input
+                    type="checkbox"
+                    checked={selectorSelectedIds.includes(id)}
+                    on:change={(event) => {
+                      const el = event.currentTarget;
+                      if (el instanceof HTMLInputElement && selectorModal) {
+                        toggleSelectorItem(selectorModal, id, el.checked);
+                      }
+                    }}
+                    class="h-4 w-4"
+                  />
+                  <span class="min-w-0 flex-1 truncate text-zinc-100">{ds.label}</span>
+                </label>
+              {/if}
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}

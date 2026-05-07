@@ -15,14 +15,12 @@ from app.models import (
     OrderPartItem,
     DeviceBomVersion,
     DeviceBomItem,
-    MonthlyPlan,
-    MonthlyPlanDevice,
-    MonthlyPlanPart,
     Invoice,
     File,
     InvoiceFile,
     InvoicePartLink,
 )
+from app.services.monthly_plan import generate_monthly_plan
 from app.services.s3_service import upload_file
 
 
@@ -143,73 +141,161 @@ async def generate_test_data(session: AsyncSession) -> None:
         OrderPartItem(order_id=o_feb4.id, part_id=p4.id, qty=Decimal("60"), price=Decimal("12.00"), note="Конденсаторы на склад"),
     ])
 
-    # Monthly plan (March 2026)
-    plan = MonthlyPlan(month=date(2026, 3, 1), revision=1, status="draft", generated_by="seed")
-    session.add(plan)
+    # Массовые заказы для проверки календарей, списков, поиска и месячной статистики.
+    customers = [
+        "ООО Альфа",
+        "АО Вектор",
+        "ООО Бета",
+        "ООО Гамма",
+        "ЗАО Импульс",
+        "ООО Север",
+        "АО Контур",
+        "ООО Прогресс",
+    ]
+    device_configs = [
+        (d1, bom1, Decimal("1480.00")),
+        (d2, bom2, Decimal("820.00")),
+        (d3, bom3, Decimal("2240.00")),
+    ]
+    direct_parts = [
+        (p1, Decimal("92.00")),
+        (p2, Decimal("460.00")),
+        (p3, Decimal("2.70")),
+        (p4, Decimal("13.50")),
+        (p5, Decimal("310.00")),
+        (p6, Decimal("185.00")),
+        (p7, Decimal("720.00")),
+    ]
+    bulk_orders: list[Order] = []
+    for idx in range(120):
+        month = 3 if idx < 60 else 4
+        month_label = "Март" if month == 3 else "Апрель"
+        day = (idx % 28) + 1
+        bulk_orders.append(
+            Order(
+                order_date=date(2026, month, day),
+                customer=customers[idx % len(customers)],
+                contract_no=f"Д-2026-{idx + 11:03d}",
+                description=f"{month_label}: тестовый производственный заказ #{idx + 1}",
+            )
+        )
+
+    session.add_all(bulk_orders)
     await session.flush()
 
-    session.add_all([
-        MonthlyPlanDevice(plan_id=plan.id, device_id=d1.id, qty_total=Decimal("30"), bom_version_id=bom1.id),
-        MonthlyPlanDevice(plan_id=plan.id, device_id=d2.id, qty_total=Decimal("5"), bom_version_id=bom2.id),
-        MonthlyPlanDevice(plan_id=plan.id, device_id=d3.id, qty_total=Decimal("3"), bom_version_id=bom3.id),
-    ])
+    bulk_order_items: list[OrderItem] = []
+    bulk_part_items: list[OrderPartItem] = []
+    for idx, order in enumerate(bulk_orders):
+        device, bom, base_price = device_configs[idx % len(device_configs)]
+        qty = Decimal(str((idx % 9) + 1))
+        bulk_order_items.append(
+            OrderItem(
+                order_id=order.id,
+                device_id=device.id,
+                bom_version_id=bom.id,
+                qty=qty,
+                price=base_price + Decimal(str((idx % 5) * 25)),
+            )
+        )
 
-    # Monthly plan parts (aggregated from BOM)
-    session.add_all([
-        MonthlyPlanPart(
-            plan_id=plan.id, part_id=p1.id, qty_required=Decimal("38"), qty_final=Decimal("38"), qty_delivered=Decimal("0")
-        ),
-        MonthlyPlanPart(
-            plan_id=plan.id, part_id=p2.id, qty_required=Decimal("38"), qty_final=Decimal("38"), qty_delivered=Decimal("0")
-        ),
-        MonthlyPlanPart(
-            plan_id=plan.id, part_id=p3.id, qty_required=Decimal("150"), qty_final=Decimal("150"), qty_delivered=Decimal("0")
-        ),
-        MonthlyPlanPart(
-            plan_id=plan.id, part_id=p4.id, qty_required=Decimal("12"), qty_final=Decimal("12"), qty_delivered=Decimal("0")
-        ),
-        MonthlyPlanPart(
-            plan_id=plan.id, part_id=p5.id, qty_required=Decimal("30"), qty_final=Decimal("30"), qty_delivered=Decimal("0")
-        ),
-        MonthlyPlanPart(
-            plan_id=plan.id, part_id=p6.id, qty_required=Decimal("10"), qty_final=Decimal("10"), qty_delivered=Decimal("0")
-        ),
-        MonthlyPlanPart(
-            plan_id=plan.id, part_id=p7.id, qty_required=Decimal("3"), qty_final=Decimal("3"), qty_delivered=Decimal("0")
-        ),
-    ])
+        if idx % 4 == 0:
+            second_device, second_bom, second_price = device_configs[(idx + 1) % len(device_configs)]
+            bulk_order_items.append(
+                OrderItem(
+                    order_id=order.id,
+                    device_id=second_device.id,
+                    bom_version_id=second_bom.id,
+                    qty=Decimal(str((idx % 4) + 1)),
+                    price=second_price,
+                )
+            )
 
-    # Invoices: two invoices cover the same plan position to demonstrate split coverage.
-    inv = Invoice(
-        invoice_no="INV-001",
-        invoice_date=date(2026, 3, 10),
-        supplier="ООО Поставщик",
-        total_amount=Decimal("39000.00"),
-        payment_date=date(2026, 3, 15),
-        description="Демо-счёт",
-    )
-    inv2 = Invoice(
-        invoice_no="INV-002",
-        invoice_date=date(2026, 3, 12),
-        supplier="АО Комплект",
-        total_amount=Decimal("11000.00"),
-        payment_date=None,
-        description="Демо-счёт: допоставка",
-    )
-    session.add_all([inv, inv2])
+        if idx % 3 == 0:
+            part, price = direct_parts[idx % len(direct_parts)]
+            bulk_part_items.append(
+                OrderPartItem(
+                    order_id=order.id,
+                    part_id=part.id,
+                    qty=Decimal(str(((idx % 10) + 1) * 3)),
+                    price=price,
+                    note="Тестовая прямая позиция детали",
+                )
+            )
+
+    session.add_all(bulk_order_items + bulk_part_items)
     await session.flush()
 
-    session.add_all([
-        InvoicePartLink(invoice_id=inv.id, plan_id=plan.id, part_id=p1.id, qty_covered=Decimal("20")),
-        InvoicePartLink(invoice_id=inv.id, plan_id=plan.id, part_id=p2.id, qty_covered=Decimal("38")),
-        InvoicePartLink(invoice_id=inv2.id, plan_id=plan.id, part_id=p1.id, qty_covered=Decimal("18")),
-    ])
+    # Monthly plans (March and April 2026) generated from the larger order set.
+    plan = await generate_monthly_plan(session, date(2026, 3, 1), replace=True)
+    april_plan = await generate_monthly_plan(session, date(2026, 4, 1), replace=True)
+
+    # 30 invoices for March and April: paid and unpaid examples for the calendar.
+    suppliers = [
+        "ООО Поставщик",
+        "АО Комплект",
+        "ООО Метиз",
+        "ЗАО Электрон",
+        "ООО Пластик-Снаб",
+        "АО Кабель",
+    ]
+    invoice_parts = [p1, p2, p3, p4, p5, p6, p7]
+    invoices_bulk: list[Invoice] = []
+    for idx in range(30):
+        invoice_month = 3 if idx < 15 else 4
+        invoice_day = (idx * 2 % 27) + 1
+        payment_day = min(invoice_day + 4, 28)
+        invoices_bulk.append(
+            Invoice(
+                invoice_no=f"INV-2026-{idx + 1:03d}",
+                invoice_date=date(2026, invoice_month, invoice_day),
+                supplier=suppliers[idx % len(suppliers)],
+                total_amount=Decimal(str(18000 + idx * 1375)) + Decimal("0.50"),
+                payment_date=date(2026, invoice_month, payment_day) if idx % 3 != 1 else None,
+                description=f"Тестовый счёт за {'март' if invoice_month == 3 else 'апрель'} #{idx + 1}",
+            )
+        )
+
+    session.add_all(invoices_bulk)
+    await session.flush()
+
+    invoice_links: list[InvoicePartLink] = []
+    for idx, invoice in enumerate(invoices_bulk):
+        target_plan = plan if invoice.invoice_date.month == 3 else april_plan
+        part = invoice_parts[idx % len(invoice_parts)]
+        invoice_links.append(
+            InvoicePartLink(
+                invoice_id=invoice.id,
+                plan_id=target_plan.id,
+                part_id=part.id,
+                qty_covered=Decimal(str((idx % 12) + 4)),
+            )
+        )
+        if idx % 5 == 0:
+            extra_part = invoice_parts[(idx + 2) % len(invoice_parts)]
+            invoice_links.append(
+                InvoicePartLink(
+                    invoice_id=invoice.id,
+                    plan_id=target_plan.id,
+                    part_id=extra_part.id,
+                    qty_covered=Decimal(str((idx % 7) + 2)),
+                )
+            )
+
+    session.add_all(invoice_links)
+
+    inv = invoices_bulk[0]
+    inv2 = invoices_bulk[1]
 
     # Test invoice files (demo)
-    content = b"Testovyy schet INV-001\n\nUslovnyy schet dlya demonstratsii raboty.\nData: 10.03.2026\nSumma: 50000 RUB"
+    content = (
+        f"Testovyy schet {inv.invoice_no}\n\n"
+        "Uslovnyy schet dlya demonstratsii raboty.\n"
+        f"Data: {inv.invoice_date.isoformat()}\n"
+        f"Summa: {inv.total_amount} RUB"
+    ).encode()
     obj_key, etag, size = await upload_file(
         io.BytesIO(content),
-        "INV-001-schet.pdf",
+        f"{inv.invoice_no}-schet.pdf",
         "application/pdf",
         prefix="invoices",
     )
@@ -225,10 +311,15 @@ async def generate_test_data(session: AsyncSession) -> None:
     await session.flush()
     session.add(InvoiceFile(invoice_id=inv.id, file_id=db_file.id, role="original"))
 
-    content2 = b"Testovyy schet INV-002\n\nDopolnitelnyy schet dlya demonstratsii razbitogo pokrytiya.\nData: 12.03.2026\nSumma: 11000 RUB"
+    content2 = (
+        f"Testovyy schet {inv2.invoice_no}\n\n"
+        "Dopolnitelnyy schet dlya demonstratsii razbitogo pokrytiya.\n"
+        f"Data: {inv2.invoice_date.isoformat()}\n"
+        f"Summa: {inv2.total_amount} RUB"
+    ).encode()
     obj_key2, etag2, size2 = await upload_file(
         io.BytesIO(content2),
-        "INV-002-schet.pdf",
+        f"{inv2.invoice_no}-schet.pdf",
         "application/pdf",
         prefix="invoices",
     )

@@ -40,6 +40,9 @@
   let invoiceDateTo = '';
   let invoiceSupplierFilter = '';
   let invoiceListPage = 1;
+  let invoiceFormSnapshot = '';
+  let invoiceSaveMessage = '';
+  let invoiceSaveOk = true;
 
   const PAGE_SIZE = 50;
   const weekDays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
@@ -51,6 +54,7 @@
   $: invoiceTotalPages = Math.max(1, Math.ceil(filteredInvoices.length / PAGE_SIZE));
   $: invoiceListPage = Math.min(Math.max(invoiceListPage, 1), invoiceTotalPages);
   $: pagedInvoices = filteredInvoices.slice((invoiceListPage - 1) * PAGE_SIZE, invoiceListPage * PAGE_SIZE);
+  $: invoiceFormDirty = modalOpen && serializeInvoiceForm(form) !== invoiceFormSnapshot;
 
   onMount(load);
 
@@ -138,6 +142,22 @@
     invoiceListPage = 1;
   }
 
+  function serializeInvoiceForm(data: InvoiceCreate) {
+    return JSON.stringify({
+      invoice_no: data.invoice_no || '',
+      invoice_date: data.invoice_date || '',
+      supplier: data.supplier || null,
+      total_amount: data.total_amount || null,
+      payment_date: data.payment_date || null,
+      description: data.description || null,
+      note: data.note || null,
+    });
+  }
+
+  function setInvoiceFormSnapshot() {
+    invoiceFormSnapshot = serializeInvoiceForm(form);
+  }
+
   function showPrevMonth() {
     calendarMonth = addMonths(calendarMonth, -1);
   }
@@ -167,6 +187,9 @@
 
   function openCreate(date = isoDate(new Date())) {
     editingId = null;
+    selectedInvoice = null;
+    invoiceParts = [];
+    invoiceFiles = [];
     form = {
       invoice_no: '',
       invoice_date: date,
@@ -174,20 +197,9 @@
       payment_date: null,
       description: null,
     };
+    setInvoiceFormSnapshot();
+    invoiceSaveMessage = '';
     if (createFileInput) createFileInput.value = '';
-    modalOpen = true;
-  }
-
-  function openEdit(i: Invoice) {
-    editingId = i.id;
-    form = {
-      invoice_no: i.invoice_no,
-      invoice_date: i.invoice_date,
-      supplier: i.supplier ?? null,
-      total_amount: i.total_amount,
-      payment_date: i.payment_date ?? null,
-      description: i.description ?? null,
-    };
     modalOpen = true;
   }
 
@@ -207,20 +219,25 @@
 
   async function save() {
     try {
+      let current: Invoice;
       if (editingId) {
-        await api.invoices.update(editingId, invoicePayload());
+        current = await api.invoices.update(editingId, invoicePayload());
       } else {
         if (!createFileInput?.files?.length) {
-          alert('При создании счёта обязательно приложите файл');
+          invoiceSaveOk = false;
+          invoiceSaveMessage = 'При создании счёта обязательно приложите файл';
           return;
         }
-        const inv = await api.invoices.create(invoicePayload());
-        await api.invoices.upload(inv.id, createFileInput.files[0]);
+        current = await api.invoices.create(invoicePayload());
+        await api.invoices.upload(current.id, createFileInput.files[0]);
       }
-      modalOpen = false;
-      load();
+      await load();
+      await openInvoice(current, { preserveMessage: true });
+      invoiceSaveOk = true;
+      invoiceSaveMessage = 'Счёт сохранён';
     } catch (e) {
-      alert((e as Error).message);
+      invoiceSaveOk = false;
+      invoiceSaveMessage = 'Не удалось сохранить счёт: ' + (e as Error).message;
     }
   }
 
@@ -228,18 +245,56 @@
     if (!confirm('Удалить счёт?')) return;
     try {
       await api.invoices.delete(id);
+      if (editingId === id || selectedInvoice?.id === id) {
+        modalOpen = false;
+        selectedInvoice = null;
+        editingId = null;
+        invoiceParts = [];
+        invoiceFiles = [];
+        partModalOpen = false;
+        invoiceSaveMessage = '';
+        invoiceFormSnapshot = '';
+      }
       load();
     } catch (e) {
       alert((e as Error).message);
     }
   }
 
-  async function openInvoice(i: Invoice) {
+  async function openInvoice(i: Invoice, opts?: { preserveMessage?: boolean }) {
+    selectedDayDate = null;
     selectedInvoice = i;
+    editingId = i.id;
+    form = {
+      invoice_no: i.invoice_no,
+      invoice_date: i.invoice_date,
+      supplier: i.supplier ?? null,
+      total_amount: i.total_amount,
+      payment_date: i.payment_date ?? null,
+      description: i.description ?? null,
+      note: i.note ?? null,
+    };
+    setInvoiceFormSnapshot();
+    if (!opts?.preserveMessage) invoiceSaveMessage = '';
+    modalOpen = true;
     [invoiceParts, invoiceFiles] = await Promise.all([
       api.invoices.parts.list(i.id),
       api.invoices.files(i.id),
     ]);
+  }
+
+  function closeInvoiceModal() {
+    if (invoiceFormDirty && !confirm('Изменения не сохранятся. Закрыть без сохранения?')) {
+      return;
+    }
+    modalOpen = false;
+    selectedInvoice = null;
+    editingId = null;
+    invoiceParts = [];
+    invoiceFiles = [];
+    partModalOpen = false;
+    invoiceSaveMessage = '';
+    invoiceFormSnapshot = '';
   }
 
   function openAddPart() {
@@ -359,63 +414,65 @@
           <div
             class="min-h-36 border-r border-b border-zinc-700 p-2 shadow-inner {day.inCurrentMonth ? 'bg-surface-800/90' : 'bg-zinc-950 text-zinc-600'}"
           >
-            <div class="mb-2 flex items-center justify-between gap-1 rounded-md bg-zinc-950/70 px-1.5 py-1 ring-1 ring-zinc-700/60">
-              <button
-                type="button"
-                on:click={() => openDayModal(day.date)}
-                class="h-8 min-w-8 rounded px-1 text-left font-mono text-lg font-bold leading-none {day.isToday ? 'bg-amber-400 text-black' : day.inCurrentMonth ? 'text-zinc-50 hover:bg-zinc-700' : 'text-zinc-500 hover:bg-zinc-800'}"
-              >
-                {day.day}
-              </button>
-              <button
-                type="button"
-                on:click={() => openCreate(day.date)}
-                class="rounded bg-zinc-700 px-1.5 py-0.5 text-[10px] font-medium text-zinc-100 hover:bg-amber-400 hover:text-black"
-              >
-                + Счёт
-              </button>
-            </div>
-
-            {#if day.invoices.length === 0}
-              <button
-                type="button"
-                on:click={() => openCreate(day.date)}
-                class="w-full rounded border border-dashed border-zinc-700 bg-zinc-900/40 px-2 py-2 text-center text-[11px] text-zinc-500 hover:border-amber-400 hover:text-amber-200"
-              >
-                добавить
-              </button>
-            {:else}
-              <div class="space-y-1 overflow-hidden">
-                {#each day.invoices.slice(0, 3) as invoice}
-                  <button
-                    type="button"
-                    on:click={() => openInvoice(invoice)}
-                    class="block w-full rounded border-l-4 border-y border-r px-2 py-1 text-left text-[11px] leading-tight shadow-sm transition-colors {invoice.payment_date
-                      ? 'border-emerald-400 bg-emerald-950/75 text-emerald-50 hover:bg-emerald-900/80'
-                      : 'border-red-400 bg-red-950/80 text-red-50 hover:bg-red-900/80'}"
-                  >
-                    <div class="flex items-center justify-between gap-1">
-                      <span class="min-w-0 truncate font-mono">№{invoice.invoice_no}</span>
-                      <span class="shrink-0 font-mono">{formatAmount(invoice.total_amount)}</span>
-                    </div>
-                    <div class="mt-0.5 flex items-center justify-between gap-1">
-                      <span class="min-w-0 truncate text-zinc-100">{invoice.supplier || invoice.description || 'без описания'}</span>
-                      <span class="shrink-0 rounded bg-black/30 px-1 text-[10px]">
-                        {invoice.payment_date ? 'оплачен' : 'нет оплаты'}
-                      </span>
-                    </div>
-                  </button>
-                {/each}
-                {#if day.invoices.length > 3}
-                  <button
-                    type="button"
-                    on:click={() => openDayModal(day.date)}
-                    class="w-full rounded bg-amber-950/60 px-2 py-1 text-left text-[11px] font-medium text-amber-100 hover:bg-amber-900/70"
-                  >
-                    +{day.invoices.length - 3} ещё
-                  </button>
-                {/if}
+            {#if day.inCurrentMonth}
+              <div class="mb-2 flex items-center justify-between gap-1 rounded-md bg-zinc-950/70 px-1.5 py-1 ring-1 ring-zinc-700/60">
+                <button
+                  type="button"
+                  on:click={() => openDayModal(day.date)}
+                  class="h-8 min-w-8 rounded px-1 text-left font-mono text-lg font-bold leading-none {day.isToday ? 'bg-amber-400 text-black' : 'text-zinc-50 hover:bg-zinc-700'}"
+                >
+                  {day.day}
+                </button>
+                <button
+                  type="button"
+                  on:click={() => openCreate(day.date)}
+                  class="rounded bg-zinc-700 px-1.5 py-0.5 text-[10px] font-medium text-zinc-100 hover:bg-amber-400 hover:text-black"
+                >
+                  + Счёт
+                </button>
               </div>
+
+              {#if day.invoices.length === 0}
+                <button
+                  type="button"
+                  on:click={() => openCreate(day.date)}
+                  class="w-full rounded border border-dashed border-zinc-700 bg-zinc-900/40 px-2 py-2 text-center text-[11px] text-zinc-500 hover:border-amber-400 hover:text-amber-200"
+                >
+                  добавить
+                </button>
+              {:else}
+                <div class="space-y-1 overflow-hidden">
+                  {#each day.invoices.slice(0, 3) as invoice}
+                    <button
+                      type="button"
+                      on:click={() => openInvoice(invoice)}
+                      class="block w-full rounded border-l-4 border-y border-r px-2 py-1 text-left text-[11px] leading-tight shadow-sm transition-colors {invoice.payment_date
+                        ? 'border-emerald-400 bg-emerald-950/75 text-emerald-50 hover:bg-emerald-900/80'
+                        : 'border-red-400 bg-red-950/80 text-red-50 hover:bg-red-900/80'}"
+                    >
+                      <div class="flex items-center justify-between gap-1">
+                        <span class="min-w-0 truncate font-mono">№{invoice.invoice_no}</span>
+                        <span class="shrink-0 font-mono">{formatAmount(invoice.total_amount)}</span>
+                      </div>
+                      <div class="mt-0.5 flex items-center justify-between gap-1">
+                        <span class="min-w-0 truncate text-zinc-100">{invoice.supplier || invoice.description || 'без описания'}</span>
+                        <span class="shrink-0 rounded bg-black/30 px-1 text-[10px]">
+                          {invoice.payment_date ? 'оплачен' : 'нет оплаты'}
+                        </span>
+                      </div>
+                    </button>
+                  {/each}
+                  {#if day.invoices.length > 3}
+                    <button
+                      type="button"
+                      on:click={() => openDayModal(day.date)}
+                      class="w-full rounded bg-amber-950/60 px-2 py-1 text-left text-[11px] font-medium text-amber-100 hover:bg-amber-900/70"
+                    >
+                      +{day.invoices.length - 3} ещё
+                    </button>
+                  {/if}
+                </div>
+              {/if}
             {/if}
           </div>
         {/each}
@@ -472,23 +529,17 @@
               <th class="px-4 py-3 font-medium">Дата оплаты</th>
               <th class="px-4 py-3 font-medium">Сумма</th>
               <th class="px-4 py-3 font-medium">Описание</th>
-              <th class="px-4 py-3 w-32"></th>
             </tr>
           </thead>
           <tbody class="divide-y divide-zinc-800">
             {#each pagedInvoices as invoice}
-              <tr class="hover:bg-zinc-800/60 {invoice.payment_date ? 'bg-emerald-950/30' : 'bg-red-950/35'}">
+              <tr on:click={() => openInvoice(invoice)} class="cursor-pointer hover:bg-zinc-800/60 {invoice.payment_date ? 'bg-emerald-950/30' : 'bg-red-950/35'}">
                 <td class="px-4 py-3">{formatDate(invoice.invoice_date)}</td>
                 <td class="px-4 py-3 font-mono">№{invoice.invoice_no}</td>
                 <td class="px-4 py-3">{invoice.supplier || '—'}</td>
                 <td class="px-4 py-3">{formatDate(invoice.payment_date)}</td>
                 <td class="px-4 py-3 font-mono">{formatAmount(invoice.total_amount)}</td>
                 <td class="px-4 py-3 text-zinc-400 max-w-xs truncate">{invoice.description || '—'}</td>
-                <td class="px-4 py-3">
-                  <button on:click={() => openInvoice(invoice)} class="text-emerald-400 hover:text-emerald-300 mr-2">Детали</button>
-                  <button on:click={() => openEdit(invoice)} class="text-amber-400 hover:text-amber-300 mr-2">Изм.</button>
-                  <button on:click={() => remove(invoice.id)} class="text-red-300 hover:text-red-200">Удал.</button>
-                </td>
               </tr>
             {/each}
           </tbody>
@@ -562,20 +613,7 @@
                   }}
                   class="text-emerald-300 hover:text-emerald-200 underline"
                 >
-                  Детали
-                </button>
-                <button
-                  type="button"
-                  on:click={() => {
-                    selectedDayDate = null;
-                    openEdit(invoice);
-                  }}
-                  class="text-amber-300 hover:text-amber-200 underline"
-                >
-                  Изм.
-                </button>
-                <button type="button" on:click={() => remove(invoice.id)} class="text-red-300 hover:text-red-200 underline">
-                  Удал.
+                  Открыть
                 </button>
               </div>
             </div>
@@ -588,101 +626,124 @@
   </div>
 {/if}
 
-{#if selectedInvoice}
-  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" on:click={() => selectedInvoice = null} role="button" tabindex="0">
-    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-2xl max-h-[80vh] overflow-auto border border-zinc-700" on:click|stopPropagation role="dialog">
-      <h2 class="text-lg font-semibold text-white mb-4">Счёт №{selectedInvoice.invoice_no}</h2>
-      <div class="mb-4">
-        <h3 class="text-sm text-zinc-400 mb-2">Файлы счёта</h3>
-        <div class="flex flex-wrap gap-2 items-center mb-2">
-          {#each invoiceFiles as f}
-            <button on:click={() => downloadFile(f.id)} class="px-3 py-1.5 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600 text-sm">
-              Скачать
-            </button>
-          {/each}
-          <input type="file" bind:this={partFileInput} class="text-sm text-zinc-400" />
-          <button on:click={uploadFile} class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 text-sm">Загрузить</button>
-        </div>
-      </div>
-      <button on:click={openAddPart} class="mb-4 px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 text-sm">Привязать к детали</button>
-      <table class="w-full">
-        <thead class="text-zinc-400 text-left text-sm">
-          <tr>
-            <th class="px-3 py-2">План</th>
-            <th class="px-3 py-2">Деталь</th>
-            <th class="px-3 py-2">Кол-во</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-zinc-700">
-          {#each invoiceParts as lp}
-            <tr>
-              <td class="px-3 py-2">{planLabel(lp.plan_id)}</td>
-              <td class="px-3 py-2">{partName(lp.part_id)}</td>
-              <td class="px-3 py-2 font-mono">{formatIntegerQty(lp.qty_covered)}</td>
-              <td>
-                <button on:click={() => removePart(lp.id)} class="text-red-400 text-sm">Удал.</button>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-      <button on:click={() => selectedInvoice = null} class="mt-4 px-4 py-2 bg-zinc-700 rounded-lg hover:bg-zinc-600">Закрыть</button>
-    </div>
-  </div>
-{/if}
-
 {#if modalOpen}
-  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]" on:click={() => modalOpen = false} role="button" tabindex="0">
-    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
-      <h2 class="text-lg font-semibold text-white mb-4">{editingId ? 'Редактировать' : 'Новый счёт'}</h2>
-      <form on:submit|preventDefault={save} class="space-y-4">
-        {#if editingId}
+  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]" on:click={closeInvoiceModal} role="button" tabindex="0">
+    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-5xl max-h-[86vh] overflow-auto border border-zinc-700" on:click|stopPropagation role="dialog">
+      <h2 class="text-lg font-semibold text-white mb-4">{editingId ? `Счёт №${form.invoice_no}` : 'Новый счёт'}</h2>
+
+      <form on:submit|preventDefault={save} class="rounded-xl border border-zinc-700 bg-zinc-900/35 p-4">
+        <div class="grid gap-4 md:grid-cols-2">
+          {#if editingId}
+            <div>
+              <label class="block text-sm text-zinc-400 mb-1">Порядковый номер</label>
+              <input value={String(editingId)} readonly class="w-full px-3 py-2 bg-zinc-950 border border-zinc-700 rounded-lg text-zinc-400" />
+            </div>
+          {/if}
           <div>
-            <label class="block text-sm text-zinc-400 mb-1">Порядковый номер</label>
-            <input value={String(editingId)} readonly class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-zinc-400" />
+            <label class="block text-sm text-zinc-400 mb-1">Номер счёта</label>
+            <input bind:value={form.invoice_no} class="w-full px-3 py-2 bg-zinc-950 border border-zinc-700 rounded-lg text-white" required />
           </div>
-        {/if}
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Номер счёта</label>
-          <input bind:value={form.invoice_no} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">Поставщик</label>
+            <input bind:value={form.supplier} class="w-full px-3 py-2 bg-zinc-950 border border-zinc-700 rounded-lg text-white" />
+          </div>
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">Дата</label>
+            <input type="date" bind:value={form.invoice_date} class="w-full px-3 py-2 bg-zinc-950 border border-zinc-700 rounded-lg text-white" required />
+          </div>
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">Дата оплаты</label>
+            <input type="date" bind:value={form.payment_date} class="w-full px-3 py-2 bg-zinc-950 border border-zinc-700 rounded-lg text-white" />
+          </div>
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">Сумма</label>
+            <input type="number" step="0.01" bind:value={form.total_amount} class="w-full px-3 py-2 bg-zinc-950 border border-zinc-700 rounded-lg text-white" />
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-sm text-zinc-400 mb-1">Описание</label>
+            <textarea
+              bind:value={form.description}
+              rows="2"
+              placeholder="Опционально"
+              class="w-full px-3 py-2 bg-zinc-950 border border-zinc-700 rounded-lg text-white"
+            ></textarea>
+          </div>
         </div>
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Поставщик</label>
-          <input bind:value={form.supplier} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
-        </div>
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Описание</label>
-          <textarea
-            bind:value={form.description}
-            rows="2"
-            placeholder="Опционально"
-            class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
-          ></textarea>
-        </div>
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Дата</label>
-          <input type="date" bind:value={form.invoice_date} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
-        </div>
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Дата оплаты</label>
-          <input type="date" bind:value={form.payment_date} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
-        </div>
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Сумма</label>
-          <input type="number" step="0.01" bind:value={form.total_amount} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
-        </div>
+
         {#if !editingId}
-          <div>
+          <div class="mt-4">
             <label class="block text-sm text-zinc-400 mb-1">Файл счёта <span class="text-red-400">*</span></label>
-            <input type="file" bind:this={createFileInput} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white text-sm" required />
+            <input type="file" bind:this={createFileInput} class="w-full px-3 py-2 bg-zinc-950 border border-zinc-700 rounded-lg text-white text-sm" required />
           </div>
         {/if}
-        <div class="flex gap-2 pt-2">
-          <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Сохранить</button>
-          <button type="button" on:click={() => modalOpen = false} class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600">Отмена</button>
+
+        <div class="flex flex-wrap gap-2 pt-4">
+          <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">
+            {selectedInvoice ? 'Сохранить счёт' : 'Создать счёт'}
+          </button>
+          <button type="button" on:click={closeInvoiceModal} class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600">Закрыть</button>
+          {#if selectedInvoice}
+            <button type="button" on:click={() => remove(selectedInvoice.id)} class="ml-auto px-4 py-2 bg-red-700 text-white rounded-lg hover:bg-red-600">Удалить</button>
+          {/if}
         </div>
+        {#if invoiceSaveMessage}
+          <div class="mt-3 rounded-lg border px-3 py-2 text-sm {invoiceSaveOk ? 'border-emerald-500/50 bg-emerald-950/60 text-emerald-100' : 'border-red-500/50 bg-red-950/60 text-red-100'}">
+            {invoiceSaveMessage}
+          </div>
+        {/if}
       </form>
+
+      <div class="mt-5 rounded-xl border border-zinc-700 bg-zinc-950/30 p-4">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <h3 class="text-base font-semibold text-white">Файлы и привязки счёта</h3>
+          {#if selectedInvoice}
+            <button on:click={openAddPart} class="px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 text-sm">Привязать к детали</button>
+          {/if}
+        </div>
+
+        {#if !selectedInvoice}
+          <div class="rounded-lg border border-dashed border-zinc-700 p-4 text-zinc-400">
+            Сначала создайте счёт, затем в этом же окне появятся файлы и привязки к деталям.
+          </div>
+        {:else}
+          <div class="mb-4">
+            <h4 class="text-sm text-zinc-400 mb-2">Файлы счёта</h4>
+            <div class="flex flex-wrap gap-2 items-center">
+              {#each invoiceFiles as f}
+                <button on:click={() => downloadFile(f.id)} class="px-3 py-1.5 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600 text-sm">
+                  Скачать
+                </button>
+              {/each}
+              <input type="file" bind:this={partFileInput} class="text-sm text-zinc-400" />
+              <button on:click={uploadFile} class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 text-sm">Загрузить</button>
+            </div>
+          </div>
+
+          <h4 class="text-sm text-zinc-400 mb-2">Привязки к деталям</h4>
+          <table class="w-full">
+            <thead class="text-zinc-400 text-left text-sm">
+              <tr>
+                <th class="px-3 py-2">План</th>
+                <th class="px-3 py-2">Деталь</th>
+                <th class="px-3 py-2">Кол-во</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-zinc-700">
+              {#each invoiceParts as lp}
+                <tr>
+                  <td class="px-3 py-2">{planLabel(lp.plan_id)}</td>
+                  <td class="px-3 py-2">{partName(lp.part_id)}</td>
+                  <td class="px-3 py-2 font-mono">{formatIntegerQty(lp.qty_covered)}</td>
+                  <td>
+                    <button on:click={() => removePart(lp.id)} class="text-red-400 text-sm">Удал.</button>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {/if}
+      </div>
     </div>
   </div>
 {/if}

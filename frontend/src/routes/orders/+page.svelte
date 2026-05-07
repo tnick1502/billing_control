@@ -38,6 +38,9 @@
   let orderDateTo = '';
   let orderCustomerFilter = '';
   let orderListPage = 1;
+  let orderFormSnapshot = '';
+  let orderSaveMessage = '';
+  let orderSaveOk = true;
 
   const PAGE_SIZE = 50;
   const weekDays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
@@ -49,6 +52,7 @@
   $: orderTotalPages = Math.max(1, Math.ceil(filteredOrders.length / PAGE_SIZE));
   $: orderListPage = Math.min(Math.max(orderListPage, 1), orderTotalPages);
   $: pagedOrders = filteredOrders.slice((orderListPage - 1) * PAGE_SIZE, orderListPage * PAGE_SIZE);
+  $: orderFormDirty = modalOpen && serializeOrderForm(form) !== orderFormSnapshot;
 
   onMount(load);
 
@@ -136,6 +140,19 @@
     orderListPage = 1;
   }
 
+  function serializeOrderForm(data: OrderCreate) {
+    return JSON.stringify({
+      order_date: data.order_date || '',
+      customer: data.customer || null,
+      contract_no: data.contract_no || null,
+      description: data.description || null,
+    });
+  }
+
+  function setOrderFormSnapshot() {
+    orderFormSnapshot = serializeOrderForm(form);
+  }
+
   function showPrevMonth() {
     calendarMonth = addMonths(calendarMonth, -1);
   }
@@ -162,9 +179,29 @@
     }
   }
 
+  function closeOrderModal() {
+    if (orderFormDirty && !confirm('Изменения не сохранятся. Закрыть без сохранения?')) {
+      return;
+    }
+    modalOpen = false;
+    selectedOrder = null;
+    editingId = null;
+    orderItems = [];
+    orderPartItems = [];
+    itemModalOpen = false;
+    partItemModalOpen = false;
+    orderSaveMessage = '';
+    orderFormSnapshot = '';
+  }
+
   function openCreate(date = isoDate(new Date())) {
     editingId = null;
+    selectedOrder = null;
+    orderItems = [];
+    orderPartItems = [];
     form = { order_date: date, customer: null, contract_no: null, description: null };
+    setOrderFormSnapshot();
+    orderSaveMessage = '';
     modalOpen = true;
   }
 
@@ -172,23 +209,21 @@
     selectedDayDate = date;
   }
 
-  function openEdit(o: Order) {
-    editingId = o.id;
-    form = { order_date: o.order_date, customer: o.customer ?? null, contract_no: o.contract_no ?? null, description: o.description ?? null };
-    modalOpen = true;
-  }
-
   async function save() {
     try {
+      let current: Order;
       if (editingId) {
-        await api.orders.update(editingId, form);
+        current = await api.orders.update(editingId, form);
       } else {
-        await api.orders.create(form);
+        current = await api.orders.create(form);
       }
-      modalOpen = false;
-      load();
+      await load();
+      await openItems(current, { preserveMessage: true });
+      orderSaveOk = true;
+      orderSaveMessage = 'Заказ сохранён';
     } catch (e) {
-      alert((e as Error).message);
+      orderSaveOk = false;
+      orderSaveMessage = 'Не удалось сохранить заказ: ' + (e as Error).message;
     }
   }
 
@@ -196,14 +231,31 @@
     if (!confirm('Удалить заказ?')) return;
     try {
       await api.orders.delete(id);
+      if (editingId === id || selectedOrder?.id === id) {
+        modalOpen = false;
+        selectedOrder = null;
+        editingId = null;
+        orderItems = [];
+        orderPartItems = [];
+        itemModalOpen = false;
+        partItemModalOpen = false;
+        orderSaveMessage = '';
+        orderFormSnapshot = '';
+      }
       load();
     } catch (e) {
       alert((e as Error).message);
     }
   }
 
-  async function openItems(o: Order) {
+  async function openItems(o: Order, opts?: { preserveMessage?: boolean }) {
+    selectedDayDate = null;
     selectedOrder = o;
+    editingId = o.id;
+    form = { order_date: o.order_date, customer: o.customer ?? null, contract_no: o.contract_no ?? null, description: o.description ?? null };
+    setOrderFormSnapshot();
+    if (!opts?.preserveMessage) orderSaveMessage = '';
+    modalOpen = true;
     try {
       if (devices.length === 0 || parts.length === 0) {
         const [devs, pts] = await Promise.all([api.devices.list(), api.parts.list()]);
@@ -406,56 +458,54 @@
           <div
             class="min-h-36 border-r border-b border-zinc-700 p-2 shadow-inner {day.inCurrentMonth ? 'bg-surface-800/90' : 'bg-zinc-950 text-zinc-600'}"
           >
-            <div class="mb-2 flex items-center justify-between gap-1 rounded-md bg-zinc-950/70 px-1.5 py-1 ring-1 ring-zinc-700/60">
-              <button
-                type="button"
-                on:click={() => openDayModal(day.date)}
-                class="h-8 min-w-8 rounded px-1 text-left font-mono text-lg font-bold leading-none {day.isToday ? 'bg-amber-400 text-black' : day.inCurrentMonth ? 'text-zinc-50 hover:bg-zinc-700' : 'text-zinc-500 hover:bg-zinc-800'}"
-              >
-                {day.day}
-              </button>
-              <button
-                type="button"
-                on:click={() => openCreate(day.date)}
-                class="rounded bg-zinc-700 px-1.5 py-0.5 text-[10px] font-medium text-zinc-100 hover:bg-amber-400 hover:text-black"
-              >
-                + Заказ
-              </button>
-            </div>
-
-            {#if day.orders.length === 0}
-              <button
-                type="button"
-                on:click={() => openCreate(day.date)}
-                class="w-full rounded border border-dashed border-zinc-700 bg-zinc-900/40 px-2 py-2 text-center text-[11px] text-zinc-500 hover:border-amber-400 hover:text-amber-200"
-              >
-                добавить
-              </button>
-            {:else}
-              <div class="space-y-1 overflow-hidden">
-                {#each day.orders.slice(0, 3) as order}
-                  <button
-                    type="button"
-                    on:click={() => openItems(order)}
-                    class="block w-full rounded border-l-4 border-y border-r border-sky-400 bg-sky-950/70 px-2 py-1 text-left text-[11px] leading-tight text-sky-50 shadow-sm transition-colors hover:bg-sky-900/80"
-                  >
-                    <div class="flex items-center justify-between gap-1">
-                      <span class="min-w-0 truncate font-mono">#{order.id}</span>
-                      <span class="shrink-0 rounded bg-black/30 px-1 text-[10px]">{order.contract_no || 'без договора'}</span>
-                    </div>
-                    <div class="truncate text-zinc-100">{order.customer || order.description || 'без заказчика'}</div>
-                  </button>
-                {/each}
-                {#if day.orders.length > 3}
-                  <button
-                    type="button"
-                    on:click={() => openDayModal(day.date)}
-                    class="w-full rounded bg-amber-950/60 px-2 py-1 text-left text-[11px] font-medium text-amber-100 hover:bg-amber-900/70"
-                  >
-                    +{day.orders.length - 3} ещё
-                  </button>
-                {/if}
+            {#if day.inCurrentMonth}
+              <div class="mb-2 flex items-center justify-between gap-1 rounded-md bg-zinc-950/70 px-1.5 py-1 ring-1 ring-zinc-700/60">
+                <button
+                  type="button"
+                  on:click={() => openDayModal(day.date)}
+                  class="h-8 min-w-8 rounded px-1 text-left font-mono text-lg font-bold leading-none {day.isToday ? 'bg-amber-400 text-black' : 'text-zinc-50 hover:bg-zinc-700'}"
+                >
+                  {day.day}
+                </button>
+                <button
+                  type="button"
+                  on:click={() => openCreate(day.date)}
+                  class="rounded bg-zinc-700 px-1.5 py-0.5 text-[10px] font-medium text-zinc-100 hover:bg-amber-400 hover:text-black"
+                >
+                  + Заказ
+                </button>
               </div>
+
+              {#if day.orders.length === 0}
+                <div class="rounded border border-dashed border-zinc-800 bg-zinc-900/30 px-2 py-2 text-center text-[11px] text-zinc-600">
+                  нет заказов
+                </div>
+              {:else}
+                <div class="space-y-1 overflow-hidden">
+                  {#each day.orders.slice(0, 3) as order}
+                    <button
+                      type="button"
+                      on:click={() => openItems(order)}
+                      class="block w-full rounded border-l-4 border-y border-r border-sky-400 bg-sky-950/70 px-2 py-1 text-left text-[11px] leading-tight text-sky-50 shadow-sm transition-colors hover:bg-sky-900/80"
+                    >
+                      <div class="flex items-center justify-between gap-1">
+                        <span class="min-w-0 truncate font-mono">#{order.id}</span>
+                        <span class="shrink-0 rounded bg-black/30 px-1 text-[10px]">{order.contract_no || 'без договора'}</span>
+                      </div>
+                      <div class="truncate text-zinc-100">{order.customer || order.description || 'без заказчика'}</div>
+                    </button>
+                  {/each}
+                  {#if day.orders.length > 3}
+                    <button
+                      type="button"
+                      on:click={() => openDayModal(day.date)}
+                      class="w-full rounded bg-amber-950/60 px-2 py-1 text-left text-[11px] font-medium text-amber-100 hover:bg-amber-900/70"
+                    >
+                      +{day.orders.length - 3} ещё
+                    </button>
+                  {/if}
+                </div>
+              {/if}
             {/if}
           </div>
         {/each}
@@ -511,22 +561,16 @@
               <th class="px-4 py-3 font-medium">Заказчик</th>
               <th class="px-4 py-3 font-medium">Номер договора</th>
               <th class="px-4 py-3 font-medium">Описание</th>
-              <th class="px-4 py-3 w-32"></th>
             </tr>
           </thead>
           <tbody class="divide-y divide-zinc-800">
             {#each pagedOrders as order}
-              <tr class="hover:bg-zinc-800/60">
+              <tr on:click={() => openItems(order)} class="cursor-pointer hover:bg-zinc-800/60">
                 <td class="px-4 py-3">{formatDate(order.order_date)}</td>
                 <td class="px-4 py-3 font-mono">#{order.id}</td>
                 <td class="px-4 py-3">{order.customer || '—'}</td>
                 <td class="px-4 py-3">{order.contract_no || '—'}</td>
                 <td class="px-4 py-3 text-zinc-400 max-w-xs truncate">{order.description || '—'}</td>
-                <td class="px-4 py-3">
-                  <button on:click={() => openItems(order)} class="text-emerald-400 hover:text-emerald-300 mr-2">Позиции</button>
-                  <button on:click={() => openEdit(order)} class="text-amber-400 hover:text-amber-300 mr-2">Изм.</button>
-                  <button on:click={() => remove(order.id)} class="text-red-300 hover:text-red-200">Удал.</button>
-                </td>
               </tr>
             {/each}
           </tbody>
@@ -578,7 +622,18 @@
       {:else}
         <div class="space-y-2">
           {#each selectedDayOrders as order}
-            <div class="rounded-xl border border-sky-400/70 bg-sky-950/70 p-3">
+            <div
+              class="cursor-pointer rounded-xl border border-sky-400/70 bg-sky-950/70 p-3 hover:bg-sky-900/80"
+              on:click={() => openItems(order)}
+              on:keydown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  openItems(order);
+                }
+              }}
+              role="button"
+              tabindex="0"
+            >
               <div class="flex flex-wrap items-center gap-2">
                 <span class="font-mono text-white">#{order.id}</span>
                 <span class="min-w-0 flex-1 truncate text-zinc-200">{order.customer || order.description || 'без заказчика'}</span>
@@ -587,31 +642,6 @@
               {#if order.description}
                 <div class="mt-1 text-sm text-zinc-300">{order.description}</div>
               {/if}
-              <div class="mt-2 flex flex-wrap gap-2 text-sm">
-                <button
-                  type="button"
-                  on:click={() => {
-                    selectedDayDate = null;
-                    openItems(order);
-                  }}
-                  class="text-emerald-300 hover:text-emerald-200 underline"
-                >
-                  Позиции
-                </button>
-                <button
-                  type="button"
-                  on:click={() => {
-                    selectedDayDate = null;
-                    openEdit(order);
-                  }}
-                  class="text-amber-300 hover:text-amber-200 underline"
-                >
-                  Изм.
-                </button>
-                <button type="button" on:click={() => remove(order.id)} class="text-red-300 hover:text-red-200 underline">
-                  Удал.
-                </button>
-              </div>
             </div>
           {/each}
         </div>
@@ -622,103 +652,124 @@
   </div>
 {/if}
 
-{#if selectedOrder}
-  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" on:click={() => selectedOrder = null} role="button" tabindex="0">
-    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-2xl max-h-[80vh] overflow-auto border border-zinc-700" on:click|stopPropagation role="dialog">
-      <h2 class="text-lg font-semibold text-white mb-4">Позиции заказа #{selectedOrder.id}</h2>
-      <div class="flex gap-2 mb-4">
-        <button on:click={openAddItem} class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 text-sm">+ Прибор</button>
-        <button on:click={openAddPartItem} class="px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 text-sm">+ Деталь</button>
-      </div>
-      <h3 class="text-sm text-zinc-400 mb-2">Приборы</h3>
-      <table class="w-full mb-6">
-        <thead class="text-zinc-400 text-left text-sm">
-          <tr>
-            <th class="px-3 py-2">Прибор</th>
-            <th class="px-3 py-2">Спецификация</th>
-            <th class="px-3 py-2">Кол-во</th>
-            <th class="px-3 py-2">Цена</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-zinc-700">
-          {#each orderItems as i}
-            <tr>
-              <td class="px-3 py-2">{deviceName(i.device_id)}</td>
-              <td class="px-3 py-2 text-zinc-400">
-                {i.bom_version ? (i.bom_version.name || `v${i.bom_version.version}`) : '—'}
-              </td>
-              <td class="px-3 py-2 font-mono">{formatQty(i.qty)}</td>
-              <td class="px-3 py-2">{formatQty(i.price)}</td>
-              <td>
-                <button on:click={() => openEditItem(i)} class="text-amber-500 text-sm mr-2">Изм.</button>
-                <button on:click={() => removeItem(i.id)} class="text-red-400 text-sm">Удал.</button>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-      <h3 class="text-sm text-zinc-400 mb-2">Детали (прямой заказ)</h3>
-      <table class="w-full mb-4">
-        <thead class="text-zinc-400 text-left text-sm">
-          <tr>
-            <th class="px-3 py-2">Деталь</th>
-            <th class="px-3 py-2">Кол-во</th>
-            <th class="px-3 py-2">Цена</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-zinc-700">
-          {#each orderPartItems as i}
-            <tr>
-              <td class="px-3 py-2">{partName(i.part_id)}</td>
-              <td class="px-3 py-2 font-mono">{formatQty(i.qty)}</td>
-              <td class="px-3 py-2">{formatQty(i.price)}</td>
-              <td>
-                <button on:click={() => openEditPartItem(i)} class="text-amber-500 text-sm mr-2">Изм.</button>
-                <button on:click={() => removePartItem(i.id)} class="text-red-400 text-sm">Удал.</button>
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-      <button on:click={() => selectedOrder = null} class="px-4 py-2 bg-zinc-700 rounded-lg hover:bg-zinc-600">Закрыть</button>
-    </div>
-  </div>
-{/if}
-
 {#if modalOpen}
-  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]" on:click={() => modalOpen = false} role="button" tabindex="0">
-    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
-      <h2 class="text-lg font-semibold text-white mb-4">{editingId ? `Редактировать заказ #${editingId}` : 'Новый заказ'}</h2>
-      <form on:submit|preventDefault={save} class="space-y-4">
-        {#if editingId}
+  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[60]" on:click={closeOrderModal} role="button" tabindex="0">
+    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-5xl max-h-[86vh] overflow-auto border border-zinc-700" on:click|stopPropagation role="dialog">
+      <h2 class="text-lg font-semibold text-white mb-4">{editingId ? `Заказ #${editingId}` : 'Новый заказ'}</h2>
+
+      <form on:submit|preventDefault={save} class="rounded-xl border border-zinc-700 bg-zinc-900/35 p-4">
+        <div class="grid gap-4 md:grid-cols-2">
+          {#if editingId}
+            <div>
+              <label class="block text-sm text-zinc-400 mb-1">ID</label>
+              <input value={editingId} readonly class="w-full px-3 py-2 bg-zinc-950 border border-zinc-700 rounded-lg text-zinc-400" />
+            </div>
+          {/if}
           <div>
-            <label class="block text-sm text-zinc-400 mb-1">ID</label>
-            <input value={editingId} readonly class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-zinc-400" />
+            <label class="block text-sm text-zinc-400 mb-1">Дата</label>
+            <input type="date" bind:value={form.order_date} class="w-full px-3 py-2 bg-zinc-950 border border-zinc-700 rounded-lg text-white" required />
+          </div>
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">Заказчик</label>
+            <input bind:value={form.customer} class="w-full px-3 py-2 bg-zinc-950 border border-zinc-700 rounded-lg text-white" />
+          </div>
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">Номер договора</label>
+            <input bind:value={form.contract_no} class="w-full px-3 py-2 bg-zinc-950 border border-zinc-700 rounded-lg text-white" />
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-sm text-zinc-400 mb-1">Описание</label>
+            <textarea bind:value={form.description} rows="2" placeholder="Опционально" class="w-full px-3 py-2 bg-zinc-950 border border-zinc-700 rounded-lg text-white" />
+          </div>
+        </div>
+
+        <div class="flex flex-wrap gap-2 pt-4">
+          <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">
+            {selectedOrder ? 'Сохранить заказ' : 'Создать заказ'}
+          </button>
+          <button type="button" on:click={closeOrderModal} class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600">Закрыть</button>
+          {#if selectedOrder}
+            <button type="button" on:click={() => remove(selectedOrder.id)} class="ml-auto px-4 py-2 bg-red-700 text-white rounded-lg hover:bg-red-600">Удалить</button>
+          {/if}
+        </div>
+        {#if orderSaveMessage}
+          <div class="mt-3 rounded-lg border px-3 py-2 text-sm {orderSaveOk ? 'border-emerald-500/50 bg-emerald-950/60 text-emerald-100' : 'border-red-500/50 bg-red-950/60 text-red-100'}">
+            {orderSaveMessage}
           </div>
         {/if}
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Дата</label>
-          <input type="date" bind:value={form.order_date} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
-        </div>
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Заказчик</label>
-          <input bind:value={form.customer} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
-        </div>
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Номер договора</label>
-          <input bind:value={form.contract_no} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
-        </div>
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Описание</label>
-          <textarea bind:value={form.description} rows="2" placeholder="Опционально" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
-        </div>
-        <div class="flex gap-2 pt-2">
-          <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Сохранить</button>
-          <button type="button" on:click={() => modalOpen = false} class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600">Отмена</button>
-        </div>
       </form>
+
+      <div class="mt-5 rounded-xl border border-zinc-700 bg-zinc-950/30 p-4">
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <h3 class="text-base font-semibold text-white">Позиции заказа</h3>
+          {#if selectedOrder}
+            <div class="flex gap-2">
+              <button on:click={openAddItem} class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 text-sm">+ Прибор</button>
+              <button on:click={openAddPartItem} class="px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 text-sm">+ Деталь</button>
+            </div>
+          {/if}
+        </div>
+
+        {#if !selectedOrder}
+          <div class="rounded-lg border border-dashed border-zinc-700 p-4 text-zinc-400">
+            Сначала создайте заказ, затем в этом же окне появится добавление приборов и деталей.
+          </div>
+        {:else}
+          <h4 class="text-sm text-zinc-400 mb-2">Приборы</h4>
+          <table class="w-full mb-6">
+            <thead class="text-zinc-400 text-left text-sm">
+              <tr>
+                <th class="px-3 py-2">Прибор</th>
+                <th class="px-3 py-2">Спецификация</th>
+                <th class="px-3 py-2">Кол-во</th>
+                <th class="px-3 py-2">Цена</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-zinc-700">
+              {#each orderItems as i}
+                <tr>
+                  <td class="px-3 py-2">{deviceName(i.device_id)}</td>
+                  <td class="px-3 py-2 text-zinc-400">
+                    {i.bom_version ? (i.bom_version.name || `v${i.bom_version.version}`) : '—'}
+                  </td>
+                  <td class="px-3 py-2 font-mono">{formatQty(i.qty)}</td>
+                  <td class="px-3 py-2">{formatQty(i.price)}</td>
+                  <td>
+                    <button on:click={() => openEditItem(i)} class="text-amber-500 text-sm mr-2">Изм.</button>
+                    <button on:click={() => removeItem(i.id)} class="text-red-400 text-sm">Удал.</button>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+
+          <h4 class="text-sm text-zinc-400 mb-2">Детали (прямой заказ)</h4>
+          <table class="w-full">
+            <thead class="text-zinc-400 text-left text-sm">
+              <tr>
+                <th class="px-3 py-2">Деталь</th>
+                <th class="px-3 py-2">Кол-во</th>
+                <th class="px-3 py-2">Цена</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-zinc-700">
+              {#each orderPartItems as i}
+                <tr>
+                  <td class="px-3 py-2">{partName(i.part_id)}</td>
+                  <td class="px-3 py-2 font-mono">{formatQty(i.qty)}</td>
+                  <td class="px-3 py-2">{formatQty(i.price)}</td>
+                  <td>
+                    <button on:click={() => openEditPartItem(i)} class="text-amber-500 text-sm mr-2">Изм.</button>
+                    <button on:click={() => removePartItem(i.id)} class="text-red-400 text-sm">Удал.</button>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        {/if}
+      </div>
     </div>
   </div>
 {/if}

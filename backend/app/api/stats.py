@@ -12,6 +12,17 @@ from app.models import Device, DeviceBomItem, Order, OrderItem, OrderPartItem, P
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
+CHART_COLORS = [
+    "rgb(245, 158, 11)",
+    "rgb(52, 211, 153)",
+    "rgb(96, 165, 250)",
+    "rgb(232, 121, 249)",
+    "rgb(251, 113, 133)",
+    "rgb(163, 230, 53)",
+    "rgb(45, 212, 191)",
+    "rgb(251, 191, 36)",
+]
+
 
 def _normalize_month_start(value: date | datetime) -> date:
     """Первая дата месяца из значения БД (date или datetime от date_trunc)."""
@@ -64,21 +75,10 @@ async def orders_devices_timeseries(
         cell[(m0, did)] += float(qty)
 
     datasets = []
-    # стабильные цвета для линий
-    colors = [
-        "rgb(245, 158, 11)",
-        "rgb(52, 211, 153)",
-        "rgb(96, 165, 250)",
-        "rgb(232, 121, 249)",
-        "rgb(251, 113, 133)",
-        "rgb(163, 230, 53)",
-        "rgb(45, 212, 191)",
-        "rgb(251, 191, 36)",
-    ]
     for idx, did in enumerate(device_ids):
         name = id_to_name.get(did, f"Прибор #{did}")
         data = [round(cell.get((lab, did), 0), 3) for lab in labels]
-        c = colors[idx % len(colors)]
+        c = CHART_COLORS[idx % len(CHART_COLORS)]
         bg = c.replace("rgb(", "rgba(").replace(")", ", 0.15)")
         datasets.append(
             {
@@ -87,6 +87,79 @@ async def orders_devices_timeseries(
                 "data": data,
                 "borderColor": c,
                 "backgroundColor": bg,
+            }
+        )
+
+    return {"labels": [d.isoformat() for d in labels], "datasets": datasets}
+
+
+@router.get("/orders-parts-monthly-timeseries")
+async def orders_parts_monthly_timeseries(
+    date_from: date = Query(..., description="Начало периода (включительно)"),
+    date_to: date = Query(..., description="Конец периода (включительно)"),
+    session: AsyncSession = Depends(get_db),
+):
+    """
+    Сумма количества деталей по календарному месяцу и детали.
+    Учитывает прямые позиции деталей и расход деталей через BOM в заказах приборов.
+    """
+    if date_from > date_to:
+        raise HTTPException(status_code=400, detail="Дата начала не может быть позже даты конца")
+
+    month_bucket = func.date_trunc("month", Order.order_date).label("month_bucket")
+    cell: dict[tuple[date, int], float] = defaultdict(float)
+
+    stmt_direct = (
+        select(month_bucket, OrderPartItem.part_id, func.sum(OrderPartItem.qty).label("qty"))
+        .select_from(OrderPartItem)
+        .join(Order, OrderPartItem.order_id == Order.id)
+        .where(Order.order_date >= date_from, Order.order_date <= date_to)
+        .group_by(month_bucket, OrderPartItem.part_id)
+        .order_by(month_bucket, OrderPartItem.part_id)
+    )
+    for month_val, part_id, qty in (await session.execute(stmt_direct)).all():
+        cell[(_normalize_month_start(month_val), part_id)] += float(qty)
+
+    stmt_bom = (
+        select(
+            month_bucket,
+            DeviceBomItem.part_id,
+            func.sum(OrderItem.qty * DeviceBomItem.qty_per_device).label("qty"),
+        )
+        .select_from(OrderItem)
+        .join(Order, OrderItem.order_id == Order.id)
+        .join(DeviceBomItem, DeviceBomItem.bom_version_id == OrderItem.bom_version_id)
+        .where(
+            OrderItem.bom_version_id.isnot(None),
+            Order.order_date >= date_from,
+            Order.order_date <= date_to,
+        )
+        .group_by(month_bucket, DeviceBomItem.part_id)
+        .order_by(month_bucket, DeviceBomItem.part_id)
+    )
+    for month_val, part_id, qty in (await session.execute(stmt_bom)).all():
+        cell[(_normalize_month_start(month_val), part_id)] += float(qty)
+
+    if not cell:
+        return {"labels": [], "datasets": []}
+
+    labels = sorted({month for month, _ in cell.keys()})
+    part_ids = sorted({part_id for _, part_id in cell.keys()})
+    part_result = await session.execute(select(Part.id, Part.name).where(Part.id.in_(part_ids)))
+    id_to_name = {p.id: p.name for p in part_result.all()}
+
+    datasets = []
+    for idx, part_id in enumerate(part_ids):
+        name = id_to_name.get(part_id, f"Деталь #{part_id}")
+        data = [round(cell.get((label, part_id), 0), 3) for label in labels]
+        color = CHART_COLORS[idx % len(CHART_COLORS)]
+        datasets.append(
+            {
+                "label": name,
+                "part_id": part_id,
+                "data": data,
+                "borderColor": color,
+                "backgroundColor": color.replace("rgb(", "rgba(").replace(")", ", 0.15)"),
             }
         )
 

@@ -122,6 +122,10 @@ export const api = {
       const q = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
       return fetchApi<StatsChartPayload>(`/stats/orders-devices-timeseries?${q}`);
     },
+    ordersPartsMonthlyTimeseries: (dateFrom: string, dateTo: string) => {
+      const q = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
+      return fetchApi<StatsChartPayload>(`/stats/orders-parts-monthly-timeseries?${q}`);
+    },
     ordersPartsTimeseries: (partId: number, dateFrom: string, dateTo: string) => {
       const q = new URLSearchParams({
         part_id: String(partId),
@@ -139,6 +143,7 @@ export interface StatsDataset {
   borderColor?: string;
   backgroundColor?: string;
   device_id?: number;
+  part_id?: number;
 }
 export interface StatsChartPayload {
   labels: string[];
