@@ -22,7 +22,6 @@ from app.models import (
 async def generate_monthly_plan(
     session: AsyncSession,
     month: date,
-    order_status: str | None = None,
     replace: bool = True,
 ) -> MonthlyPlan:
     """Generate monthly plan from orders for the given month."""
@@ -32,7 +31,7 @@ async def generate_monthly_plan(
 
     # При replace: сохранить «поставлено» и привязки счетов, затем удалить старые планы месяца
     delivered_by_part: dict[int, Decimal] = {}
-    links_snapshot: list[tuple[int, int, Decimal | None, Decimal | None, str | None]] = []
+    links_snapshot: list[tuple[int, int, Decimal | None, str | None]] = []
 
     if replace:
         existing_result = await session.execute(select(MonthlyPlan).where(MonthlyPlan.month == first_day))
@@ -50,7 +49,6 @@ async def generate_monthly_plan(
                     InvoicePartLink.invoice_id,
                     InvoicePartLink.part_id,
                     InvoicePartLink.qty_covered,
-                    InvoicePartLink.amount_allocated,
                     InvoicePartLink.note,
                 ).where(InvoicePartLink.plan_id.in_(plan_ids))
             )
@@ -60,7 +58,7 @@ async def generate_monthly_plan(
                 if key not in seen_ip:
                     seen_ip.add(key)
                     links_snapshot.append(
-                        (row.invoice_id, row.part_id, row.qty_covered, row.amount_allocated, row.note)
+                        (row.invoice_id, row.part_id, row.qty_covered, row.note)
                     )
 
         for plan in existing_plans:
@@ -72,8 +70,6 @@ async def generate_monthly_plan(
         Order.order_date >= first_day,
         Order.order_date <= last_day,
     )
-    if order_status:
-        orders_q = orders_q.where(Order.status == order_status)
     orders_result = await session.execute(orders_q)
     orders = list(orders_result.scalars().all())
     order_ids = [o.id for o in orders]
@@ -174,7 +170,7 @@ async def generate_monthly_plan(
 
     # Восстановить привязки счёт → деталь в плане (только детали, которые есть в новом расчёте)
     new_part_ids = set(part_totals.keys())
-    for invoice_id, part_id, qty_covered, amount_allocated, note in links_snapshot:
+    for invoice_id, part_id, qty_covered, note in links_snapshot:
         if part_id not in new_part_ids:
             continue
         session.add(
@@ -183,7 +179,6 @@ async def generate_monthly_plan(
                 plan_id=plan.id,
                 part_id=part_id,
                 qty_covered=qty_covered,
-                amount_allocated=amount_allocated,
                 note=note,
             )
         )

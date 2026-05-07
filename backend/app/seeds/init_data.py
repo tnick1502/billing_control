@@ -47,10 +47,16 @@ async def seed_database(session: AsyncSession, force: bool = False) -> bool:
     if already_populated and force:
         await clear_database(session)
 
+    await generate_test_data(session)
+    return True
+
+
+async def generate_test_data(session: AsyncSession) -> None:
+    """Generate test data for an empty database."""
     # Devices
-    d1 = Device(primary_name="Датчик температуры Т-100", model="T-100", description="Промышленный датчик температуры", is_active=True)
-    d2 = Device(primary_name="Реле контроля РК-5", model="RK-5", description="Реле контроля напряжения", is_active=True)
-    d3 = Device(primary_name="Блок питания БП-12", model="BP-12", description="Блок питания 12В", is_active=True)
+    d1 = Device(primary_name="Датчик температуры Т-100", model="T-100", description="Промышленный датчик температуры")
+    d2 = Device(primary_name="Реле контроля РК-5", model="RK-5", description="Реле контроля напряжения")
+    d3 = Device(primary_name="Блок питания БП-12", model="BP-12", description="Блок питания 12В")
     session.add_all([d1, d2, d3])
     await session.flush()
 
@@ -61,13 +67,13 @@ async def seed_database(session: AsyncSession, force: bool = False) -> bool:
     ])
 
     # Parts
-    p1 = Part(name="Корпус пластиковый", description="Ударопрочный корпус", is_active=True)
-    p2 = Part(name="Плата печатная", description="Основная плата", is_active=True)
-    p3 = Part(name="Резистор 10кОм", description="Точность 1%", is_active=True)
-    p4 = Part(name="Конденсатор 100мкФ", description="Электролитический", is_active=True)
-    p5 = Part(name="Термопара", description="Тип K", is_active=True)
-    p6 = Part(name="Катушка реле", description="12В", is_active=True)
-    p7 = Part(name="Трансформатор 12В", description="Мощность 5Вт", is_active=True)
+    p1 = Part(name="Корпус пластиковый", cipher="KP-001", article="ART-1001", description="Ударопрочный корпус")
+    p2 = Part(name="Плата печатная", cipher="PCB-001", article="ART-1002", description="Основная плата")
+    p3 = Part(name="Резистор 10кОм", cipher="R-10K", article="ART-1003", description="Точность 1%")
+    p4 = Part(name="Конденсатор 100мкФ", cipher="C-100UF", article="ART-1004", description="Электролитический")
+    p5 = Part(name="Термопара", cipher="TC-K", article="ART-1005", description="Тип K")
+    p6 = Part(name="Катушка реле", cipher="RC-12V", article="ART-1006", description="12В")
+    p7 = Part(name="Трансформатор 12В", cipher="TR-12V", article="ART-1007", description="Мощность 5Вт")
     session.add_all([p1, p2, p3, p4, p5, p6, p7])
     await session.flush()
 
@@ -94,16 +100,16 @@ async def seed_database(session: AsyncSession, force: bool = False) -> bool:
     ])
 
     # Orders — январь / февраль / март: разные даты, приборы и прямые детали (для графиков и тестов)
-    o_jan1 = Order(status="confirmed", order_date=date(2026, 1, 8), description="Январь: датчики и реле")
-    o_jan2 = Order(status="draft", order_date=date(2026, 1, 15), description="Январь: черновик по блокам питания")
-    o_jan3 = Order(status="confirmed", order_date=date(2026, 1, 22), description="Январь: смешанная партия")
-    o_jan4 = Order(status="confirmed", order_date=date(2026, 1, 28), description="Январь: только прямые детали")
-    o_feb1 = Order(status="confirmed", order_date=date(2026, 2, 5), description="Февраль: первая волна")
-    o_feb2 = Order(status="confirmed", order_date=date(2026, 2, 12), description="Февраль: реле отдельной строкой")
-    o_feb3 = Order(status="confirmed", order_date=date(2026, 2, 19), description="Февраль: все три прибора")
-    o_feb4 = Order(status="confirmed", order_date=date(2026, 2, 26), description="Февраль: детали без приборов")
-    o1 = Order(status="confirmed", order_date=date(2026, 3, 1), description="Заказ для производства")
-    o2 = Order(status="confirmed", order_date=date(2026, 3, 5), description="Дополнительная партия")
+    o_jan1 = Order(order_date=date(2026, 1, 8), customer="ООО Альфа", contract_no="Д-2026-01", description="Январь: датчики и реле")
+    o_jan2 = Order(order_date=date(2026, 1, 15), customer="ООО Бета", contract_no="Д-2026-02", description="Январь: партия по блокам питания")
+    o_jan3 = Order(order_date=date(2026, 1, 22), customer="АО Вектор", contract_no="Д-2026-03", description="Январь: смешанная партия")
+    o_jan4 = Order(order_date=date(2026, 1, 28), customer="ООО Альфа", contract_no="Д-2026-04", description="Январь: только прямые детали")
+    o_feb1 = Order(order_date=date(2026, 2, 5), customer="ООО Гамма", contract_no="Д-2026-05", description="Февраль: первая волна")
+    o_feb2 = Order(order_date=date(2026, 2, 12), customer="АО Вектор", contract_no="Д-2026-06", description="Февраль: реле отдельной строкой")
+    o_feb3 = Order(order_date=date(2026, 2, 19), customer="ООО Бета", contract_no="Д-2026-07", description="Февраль: все три прибора")
+    o_feb4 = Order(order_date=date(2026, 2, 26), customer="ООО Гамма", contract_no="Д-2026-08", description="Февраль: детали без приборов")
+    o1 = Order(order_date=date(2026, 3, 1), customer="ООО Альфа", contract_no="Д-2026-09", description="Заказ для производства")
+    o2 = Order(order_date=date(2026, 3, 5), customer="АО Вектор", contract_no="Д-2026-10", description="Дополнительная партия")
     session.add_all([o_jan1, o_jan2, o_jan3, o_jan4, o_feb1, o_feb2, o_feb3, o_feb4, o1, o2])
     await session.flush()
 
@@ -173,18 +179,33 @@ async def seed_database(session: AsyncSession, force: bool = False) -> bool:
         ),
     ])
 
-    # Invoice
-    inv = Invoice(invoice_no="tmp-seed", invoice_date=date(2026, 3, 10), total_amount=Decimal("50000.00"), status="received", description="Демо-счёт")
-    session.add(inv)
+    # Invoices: two invoices cover the same plan position to demonstrate split coverage.
+    inv = Invoice(
+        invoice_no="INV-001",
+        invoice_date=date(2026, 3, 10),
+        supplier="ООО Поставщик",
+        total_amount=Decimal("39000.00"),
+        payment_date=date(2026, 3, 15),
+        description="Демо-счёт",
+    )
+    inv2 = Invoice(
+        invoice_no="INV-002",
+        invoice_date=date(2026, 3, 12),
+        supplier="АО Комплект",
+        total_amount=Decimal("11000.00"),
+        payment_date=None,
+        description="Демо-счёт: допоставка",
+    )
+    session.add_all([inv, inv2])
     await session.flush()
-    inv.invoice_no = str(inv.id)
 
     session.add_all([
-        InvoicePartLink(invoice_id=inv.id, plan_id=plan.id, part_id=p1.id, qty_covered=Decimal("38"), amount_allocated=Decimal("12000.00")),
-        InvoicePartLink(invoice_id=inv.id, plan_id=plan.id, part_id=p2.id, qty_covered=Decimal("38"), amount_allocated=Decimal("20000.00")),
+        InvoicePartLink(invoice_id=inv.id, plan_id=plan.id, part_id=p1.id, qty_covered=Decimal("20")),
+        InvoicePartLink(invoice_id=inv.id, plan_id=plan.id, part_id=p2.id, qty_covered=Decimal("38")),
+        InvoicePartLink(invoice_id=inv2.id, plan_id=plan.id, part_id=p1.id, qty_covered=Decimal("18")),
     ])
 
-    # Test invoice file (demo)
+    # Test invoice files (demo)
     content = b"Testovyy schet INV-001\n\nUslovnyy schet dlya demonstratsii raboty.\nData: 10.03.2026\nSumma: 50000 RUB"
     obj_key, etag, size = await upload_file(
         io.BytesIO(content),
@@ -204,4 +225,23 @@ async def seed_database(session: AsyncSession, force: bool = False) -> bool:
     await session.flush()
     session.add(InvoiceFile(invoice_id=inv.id, file_id=db_file.id, role="original"))
 
-    return True
+    content2 = b"Testovyy schet INV-002\n\nDopolnitelnyy schet dlya demonstratsii razbitogo pokrytiya.\nData: 12.03.2026\nSumma: 11000 RUB"
+    obj_key2, etag2, size2 = await upload_file(
+        io.BytesIO(content2),
+        "INV-002-schet.pdf",
+        "application/pdf",
+        prefix="invoices",
+    )
+    db_file2 = File(
+        storage="s3",
+        bucket=settings.s3_bucket,
+        object_key=obj_key2,
+        etag=etag2,
+        content_type="application/pdf",
+        size_bytes=size2,
+    )
+    session.add(db_file2)
+    await session.flush()
+    session.add(InvoiceFile(invoice_id=inv2.id, file_id=db_file2.id, role="original"))
+
+    return None

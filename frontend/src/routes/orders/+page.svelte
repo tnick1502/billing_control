@@ -4,12 +4,20 @@
   import { formatQty, formatDate } from '$lib/format';
   import type { Order, OrderCreate, OrderItem, OrderItemCreate, OrderPartItem, OrderPartItemCreate, BomVersion } from '$lib/api';
 
+  type CalendarDay = {
+    date: string;
+    day: number;
+    inCurrentMonth: boolean;
+    isToday: boolean;
+    orders: Order[];
+  };
+
   let orders: Order[] = [];
   let devices: { id: number; primary_name: string }[] = [];
   let parts: { id: number; name: string }[] = [];
   let loading = true;
   let modalOpen = false;
-  let form: OrderCreate = { status: 'draft', order_date: new Date().toISOString().slice(0, 10), description: null };
+  let form: OrderCreate = { order_date: new Date().toISOString().slice(0, 10), customer: null, contract_no: null, description: null };
   let editingId: number | null = null;
   let selectedOrder: Order | null = null;
   let orderItems: OrderItem[] = [];
@@ -22,8 +30,123 @@
   let partItemModalOpen = false;
   let partItemForm: OrderPartItemCreate = { part_id: 0, qty: '1', price: null, note: null };
   let editingPartItemId: number | null = null;
+  let calendarMonth = monthKey(new Date());
+  let selectedDayDate: string | null = null;
+  let viewMode: 'calendar' | 'list' = 'calendar';
+  let orderSortDir: 'asc' | 'desc' = 'desc';
+  let orderDateFrom = '';
+  let orderDateTo = '';
+  let orderCustomerFilter = '';
+  let orderListPage = 1;
+
+  const PAGE_SIZE = 50;
+  const weekDays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+  $: calendarDays = buildCalendarDays(calendarMonth, orders);
+  $: calendarMonthLabel = monthLabel(calendarMonth);
+  $: selectedDayOrders = selectedDayDate ? ordersForDate(selectedDayDate) : [];
+  $: filteredOrders = filterAndSortOrders(orders, orderDateFrom, orderDateTo, orderCustomerFilter, orderSortDir);
+  $: orderTotalPages = Math.max(1, Math.ceil(filteredOrders.length / PAGE_SIZE));
+  $: orderListPage = Math.min(Math.max(orderListPage, 1), orderTotalPages);
+  $: pagedOrders = filteredOrders.slice((orderListPage - 1) * PAGE_SIZE, orderListPage * PAGE_SIZE);
 
   onMount(load);
+
+  function pad2(n: number) {
+    return String(n).padStart(2, '0');
+  }
+
+  function isoDate(d: Date) {
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  }
+
+  function monthKey(d: Date) {
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+  }
+
+  function dateFromIso(date: string) {
+    const [year, month, day] = date.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  }
+
+  function addMonths(month: string, delta: number) {
+    const [year, monthNo] = month.split('-').map(Number);
+    return monthKey(new Date(year, monthNo - 1 + delta, 1));
+  }
+
+  function monthLabel(month: string) {
+    const [year, monthNo] = month.split('-').map(Number);
+    return new Date(year, monthNo - 1, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+  }
+
+  function dayLabel(date: string) {
+    return dateFromIso(date).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+  }
+
+  function ordersForDate(date: string) {
+    return orders.filter((o) => o.order_date === date);
+  }
+
+  function buildCalendarDays(month: string, items: Order[]): CalendarDay[] {
+    const [year, monthNo] = month.split('-').map(Number);
+    const firstDay = new Date(year, monthNo - 1, 1);
+    const mondayOffset = (firstDay.getDay() + 6) % 7;
+    const start = new Date(year, monthNo - 1, 1 - mondayOffset);
+    const today = isoDate(new Date());
+    const byDate: Record<string, Order[]> = {};
+
+    for (const order of items) {
+      (byDate[order.order_date] ??= []).push(order);
+    }
+
+    return Array.from({ length: 42 }, (_, idx) => {
+      const d = new Date(start);
+      d.setDate(start.getDate() + idx);
+      const date = isoDate(d);
+      const dayOrders = [...(byDate[date] ?? [])].sort((a, b) => (a.id ?? 0) - (b.id ?? 0));
+
+      return {
+        date,
+        day: d.getDate(),
+        inCurrentMonth: d.getMonth() === monthNo - 1,
+        isToday: date === today,
+        orders: dayOrders,
+      };
+    });
+  }
+
+  function filterAndSortOrders(items: Order[], dateFrom: string, dateTo: string, customerFilter: string, sortDir: 'asc' | 'desc') {
+    const customerNeedle = customerFilter.trim().toLowerCase();
+    return [...items]
+      .filter((order) => !dateFrom || order.order_date >= dateFrom)
+      .filter((order) => !dateTo || order.order_date <= dateTo)
+      .filter((order) => {
+        if (!customerNeedle) return true;
+        const haystack = `${order.customer ?? ''} ${order.contract_no ?? ''} ${order.description ?? ''} ${order.id ?? ''}`.toLowerCase();
+        return haystack.includes(customerNeedle);
+      })
+      .sort((a, b) => {
+        const byDate = a.order_date.localeCompare(b.order_date);
+        if (byDate !== 0) return sortDir === 'asc' ? byDate : -byDate;
+        return (a.id ?? 0) - (b.id ?? 0);
+      });
+  }
+
+  function resetOrderListPage() {
+    orderListPage = 1;
+  }
+
+  function showPrevMonth() {
+    calendarMonth = addMonths(calendarMonth, -1);
+  }
+
+  function showNextMonth() {
+    calendarMonth = addMonths(calendarMonth, 1);
+  }
+
+  function showCurrentMonth() {
+    calendarMonth = monthKey(new Date());
+  }
 
   async function load() {
     loading = true;
@@ -39,15 +162,19 @@
     }
   }
 
-  function openCreate() {
+  function openCreate(date = isoDate(new Date())) {
     editingId = null;
-    form = { status: 'draft', order_date: new Date().toISOString().slice(0, 10), description: null };
+    form = { order_date: date, customer: null, contract_no: null, description: null };
     modalOpen = true;
+  }
+
+  function openDayModal(date: string) {
+    selectedDayDate = date;
   }
 
   function openEdit(o: Order) {
     editingId = o.id;
-    form = { status: o.status, order_date: o.order_date, description: o.description ?? null };
+    form = { order_date: o.order_date, customer: o.customer ?? null, contract_no: o.contract_no ?? null, description: o.description ?? null };
     modalOpen = true;
   }
 
@@ -133,9 +260,8 @@
 
   const BOM_STATUS_LABELS: Record<string, string> = {
     active: 'Активная',
-    current: 'Текущая',
-    archived: 'Архив',
-    draft: 'Черновик',
+    current: 'Рабочая',
+    archived: 'Архивная',
   };
   function bomStatusLabel(s: string) {
     return BOM_STATUS_LABELS[s] ?? s;
@@ -222,45 +348,279 @@
 
 <div class="p-8">
   <div class="flex justify-between items-center mb-6">
-    <h1 class="text-2xl font-bold text-white">Заказы</h1>
-    <button on:click={openCreate} class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400 transition-colors">
-      Добавить
-    </button>
+    <div>
+      <h1 class="text-2xl font-bold text-white">Заказы</h1>
+      <p class="text-sm text-zinc-400">Календарь по дате заказа</p>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="flex rounded-lg border border-zinc-700 bg-zinc-900 p-0.5">
+        <button
+          type="button"
+          on:click={() => viewMode = 'calendar'}
+          class="rounded-md px-3 py-1.5 {viewMode === 'calendar' ? 'bg-amber-500 text-black' : 'text-zinc-300 hover:bg-zinc-700'}"
+        >
+          Календарь
+        </button>
+        <button
+          type="button"
+          on:click={() => viewMode = 'list'}
+          class="rounded-md px-3 py-1.5 {viewMode === 'list' ? 'bg-amber-500 text-black' : 'text-zinc-300 hover:bg-zinc-700'}"
+        >
+          Список
+        </button>
+      </div>
+      {#if viewMode === 'calendar'}
+        <button type="button" on:click={showPrevMonth} class="px-3 py-1.5 bg-zinc-800 text-white rounded-lg hover:bg-zinc-700">
+          ←
+        </button>
+        <button type="button" on:click={showCurrentMonth} class="px-3 py-1.5 bg-zinc-800 text-white rounded-lg hover:bg-zinc-700">
+          Сегодня
+        </button>
+        <button type="button" on:click={showNextMonth} class="px-3 py-1.5 bg-zinc-800 text-white rounded-lg hover:bg-zinc-700">
+          →
+        </button>
+      {/if}
+      <button type="button" on:click={() => openCreate()} class="px-4 py-1.5 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400 transition-colors">
+        Добавить
+      </button>
+    </div>
   </div>
 
   {#if loading}
     <p class="text-zinc-400">Загрузка...</p>
+  {:else if viewMode === 'calendar'}
+    <div class="rounded-xl border border-zinc-600 overflow-hidden bg-zinc-950 shadow-lg shadow-black/25">
+      <div class="flex items-center justify-between border-b border-zinc-700 bg-surface-800 px-4 py-2">
+        <h2 class="text-lg font-semibold capitalize text-white">{calendarMonthLabel}</h2>
+        <div class="flex items-center gap-3 text-xs text-zinc-300">
+          <span class="inline-flex items-center gap-1 rounded bg-sky-950 px-2 py-1 text-sky-100"><span class="h-2 w-2 rounded-full bg-sky-400"></span>Заказ</span>
+        </div>
+      </div>
+      <div class="grid grid-cols-7 border-b border-zinc-700 bg-zinc-900 text-center text-xs font-semibold uppercase tracking-wide text-zinc-200">
+        {#each weekDays as day}
+          <div class="px-2 py-2">{day}</div>
+        {/each}
+      </div>
+      <div class="grid grid-cols-7">
+        {#each calendarDays as day}
+          <div
+            class="min-h-36 border-r border-b border-zinc-700 p-2 shadow-inner {day.inCurrentMonth ? 'bg-surface-800/90' : 'bg-zinc-950 text-zinc-600'}"
+          >
+            <div class="mb-2 flex items-center justify-between gap-1 rounded-md bg-zinc-950/70 px-1.5 py-1 ring-1 ring-zinc-700/60">
+              <button
+                type="button"
+                on:click={() => openDayModal(day.date)}
+                class="h-8 min-w-8 rounded px-1 text-left font-mono text-lg font-bold leading-none {day.isToday ? 'bg-amber-400 text-black' : day.inCurrentMonth ? 'text-zinc-50 hover:bg-zinc-700' : 'text-zinc-500 hover:bg-zinc-800'}"
+              >
+                {day.day}
+              </button>
+              <button
+                type="button"
+                on:click={() => openCreate(day.date)}
+                class="rounded bg-zinc-700 px-1.5 py-0.5 text-[10px] font-medium text-zinc-100 hover:bg-amber-400 hover:text-black"
+              >
+                + Заказ
+              </button>
+            </div>
+
+            {#if day.orders.length === 0}
+              <button
+                type="button"
+                on:click={() => openCreate(day.date)}
+                class="w-full rounded border border-dashed border-zinc-700 bg-zinc-900/40 px-2 py-2 text-center text-[11px] text-zinc-500 hover:border-amber-400 hover:text-amber-200"
+              >
+                добавить
+              </button>
+            {:else}
+              <div class="space-y-1 overflow-hidden">
+                {#each day.orders.slice(0, 3) as order}
+                  <button
+                    type="button"
+                    on:click={() => openItems(order)}
+                    class="block w-full rounded border-l-4 border-y border-r border-sky-400 bg-sky-950/70 px-2 py-1 text-left text-[11px] leading-tight text-sky-50 shadow-sm transition-colors hover:bg-sky-900/80"
+                  >
+                    <div class="flex items-center justify-between gap-1">
+                      <span class="min-w-0 truncate font-mono">#{order.id}</span>
+                      <span class="shrink-0 rounded bg-black/30 px-1 text-[10px]">{order.contract_no || 'без договора'}</span>
+                    </div>
+                    <div class="truncate text-zinc-100">{order.customer || order.description || 'без заказчика'}</div>
+                  </button>
+                {/each}
+                {#if day.orders.length > 3}
+                  <button
+                    type="button"
+                    on:click={() => openDayModal(day.date)}
+                    class="w-full rounded bg-amber-950/60 px-2 py-1 text-left text-[11px] font-medium text-amber-100 hover:bg-amber-900/70"
+                  >
+                    +{day.orders.length - 3} ещё
+                  </button>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    </div>
   {:else}
-    <div class="overflow-x-auto rounded-xl border border-zinc-700">
-      <table class="w-full">
-        <thead class="bg-surface-800 text-zinc-400 text-left">
-          <tr>
-            <th class="px-4 py-3 font-medium">ID</th>
-            <th class="px-4 py-3 font-medium">Дата</th>
-            <th class="px-4 py-3 font-medium">Статус</th>
-            <th class="px-4 py-3 font-medium">Описание</th>
-            <th class="px-4 py-3 w-32"></th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-zinc-800">
-          {#each orders as o}
-            <tr class="hover:bg-zinc-800/50">
-              <td class="px-4 py-3 font-mono">{o.id ?? '—'}</td>
-              <td class="px-4 py-3">{formatDate(o.order_date)}</td>
-              <td class="px-4 py-3"><span class="px-2 py-0.5 rounded text-sm bg-zinc-700">{o.status}</span></td>
-              <td class="px-4 py-3 text-zinc-400 max-w-xs truncate">{o.description || '—'}</td>
-              <td class="px-4 py-3">
-                <button on:click={() => openItems(o)} class="text-emerald-500 hover:text-emerald-400 mr-2">Позиции</button>
-                <button on:click={() => openEdit(o)} class="text-amber-500 hover:text-amber-400 mr-2">Изм.</button>
-                <button on:click={() => remove(o.id)} class="text-red-400 hover:text-red-300">Удал.</button>
-              </td>
+    <div class="space-y-4">
+      <div class="rounded-xl border border-zinc-700 bg-surface-800 p-4">
+        <div class="grid gap-3 md:grid-cols-5">
+          <div>
+            <label class="block text-xs text-zinc-400 mb-1">Дата от</label>
+            <input type="date" bind:value={orderDateFrom} on:input={resetOrderListPage} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+          </div>
+          <div>
+            <label class="block text-xs text-zinc-400 mb-1">Дата до</label>
+            <input type="date" bind:value={orderDateTo} on:input={resetOrderListPage} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+          </div>
+          <div>
+            <label class="block text-xs text-zinc-400 mb-1">Заказчик / договор</label>
+            <input bind:value={orderCustomerFilter} on:input={resetOrderListPage} placeholder="Поиск..." class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+          </div>
+          <div>
+            <label class="block text-xs text-zinc-400 mb-1">Сортировка даты</label>
+            <select bind:value={orderSortDir} on:change={resetOrderListPage} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white">
+              <option value="desc">Сначала новые</option>
+              <option value="asc">Сначала старые</option>
+            </select>
+          </div>
+          <div class="flex items-end">
+            <button
+              type="button"
+              on:click={() => {
+                orderDateFrom = '';
+                orderDateTo = '';
+                orderCustomerFilter = '';
+                orderSortDir = 'desc';
+                resetOrderListPage();
+              }}
+              class="w-full px-3 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600"
+            >
+              Сбросить
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto rounded-xl border border-zinc-700 bg-surface-800">
+        <table class="w-full">
+          <thead class="bg-zinc-900 text-zinc-300 text-left">
+            <tr>
+              <th class="px-4 py-3 font-medium">Дата</th>
+              <th class="px-4 py-3 font-medium">ID</th>
+              <th class="px-4 py-3 font-medium">Заказчик</th>
+              <th class="px-4 py-3 font-medium">Номер договора</th>
+              <th class="px-4 py-3 font-medium">Описание</th>
+              <th class="px-4 py-3 w-32"></th>
             </tr>
-          {/each}
-        </tbody>
-      </table>
+          </thead>
+          <tbody class="divide-y divide-zinc-800">
+            {#each pagedOrders as order}
+              <tr class="hover:bg-zinc-800/60">
+                <td class="px-4 py-3">{formatDate(order.order_date)}</td>
+                <td class="px-4 py-3 font-mono">#{order.id}</td>
+                <td class="px-4 py-3">{order.customer || '—'}</td>
+                <td class="px-4 py-3">{order.contract_no || '—'}</td>
+                <td class="px-4 py-3 text-zinc-400 max-w-xs truncate">{order.description || '—'}</td>
+                <td class="px-4 py-3">
+                  <button on:click={() => openItems(order)} class="text-emerald-400 hover:text-emerald-300 mr-2">Позиции</button>
+                  <button on:click={() => openEdit(order)} class="text-amber-400 hover:text-amber-300 mr-2">Изм.</button>
+                  <button on:click={() => remove(order.id)} class="text-red-300 hover:text-red-200">Удал.</button>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-surface-800 px-4 py-3 text-sm text-zinc-300">
+        <div>
+          Показано {pagedOrders.length} из {filteredOrders.length}, страница {orderListPage} из {orderTotalPages}
+        </div>
+        <div class="flex gap-2">
+          <button type="button" disabled={orderListPage <= 1} on:click={() => orderListPage -= 1} class="px-3 py-1.5 bg-zinc-700 rounded-lg hover:bg-zinc-600 disabled:opacity-40">
+            Назад
+          </button>
+          <button type="button" disabled={orderListPage >= orderTotalPages} on:click={() => orderListPage += 1} class="px-3 py-1.5 bg-zinc-700 rounded-lg hover:bg-zinc-600 disabled:opacity-40">
+            Вперед
+          </button>
+        </div>
+      </div>
     </div>
   {/if}
 </div>
+
+{#if selectedDayDate}
+  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-40" on:click={() => selectedDayDate = null} role="button" tabindex="0">
+    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-3xl max-h-[80vh] overflow-auto border border-zinc-700" on:click|stopPropagation role="dialog">
+      <div class="mb-4 flex items-center justify-between gap-3">
+        <div>
+          <h2 class="text-lg font-semibold text-white">Заказы за {dayLabel(selectedDayDate)}</h2>
+          <p class="text-sm text-zinc-400">Всего: {selectedDayOrders.length}</p>
+        </div>
+        <button
+          type="button"
+          on:click={() => {
+            const date = selectedDayDate ?? isoDate(new Date());
+            selectedDayDate = null;
+            openCreate(date);
+          }}
+          class="px-3 py-1.5 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400"
+        >
+          + Заказ
+        </button>
+      </div>
+
+      {#if selectedDayOrders.length === 0}
+        <div class="rounded-xl border border-dashed border-zinc-700 p-6 text-center text-zinc-400">
+          На этот день заказов нет.
+        </div>
+      {:else}
+        <div class="space-y-2">
+          {#each selectedDayOrders as order}
+            <div class="rounded-xl border border-sky-400/70 bg-sky-950/70 p-3">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="font-mono text-white">#{order.id}</span>
+                <span class="min-w-0 flex-1 truncate text-zinc-200">{order.customer || order.description || 'без заказчика'}</span>
+                <span class="rounded bg-black/30 px-2 py-0.5 text-sky-100">{order.contract_no || 'без договора'}</span>
+              </div>
+              {#if order.description}
+                <div class="mt-1 text-sm text-zinc-300">{order.description}</div>
+              {/if}
+              <div class="mt-2 flex flex-wrap gap-2 text-sm">
+                <button
+                  type="button"
+                  on:click={() => {
+                    selectedDayDate = null;
+                    openItems(order);
+                  }}
+                  class="text-emerald-300 hover:text-emerald-200 underline"
+                >
+                  Позиции
+                </button>
+                <button
+                  type="button"
+                  on:click={() => {
+                    selectedDayDate = null;
+                    openEdit(order);
+                  }}
+                  class="text-amber-300 hover:text-amber-200 underline"
+                >
+                  Изм.
+                </button>
+                <button type="button" on:click={() => remove(order.id)} class="text-red-300 hover:text-red-200 underline">
+                  Удал.
+                </button>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      <button on:click={() => selectedDayDate = null} class="mt-4 px-4 py-2 bg-zinc-700 rounded-lg hover:bg-zinc-600">Закрыть</button>
+    </div>
+  </div>
+{/if}
 
 {#if selectedOrder}
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" on:click={() => selectedOrder = null} role="button" tabindex="0">
@@ -343,8 +703,12 @@
           <input type="date" bind:value={form.order_date} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
         </div>
         <div>
-          <label class="block text-sm text-zinc-400 mb-1">Статус</label>
-          <input bind:value={form.status} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+          <label class="block text-sm text-zinc-400 mb-1">Заказчик</label>
+          <input bind:value={form.customer} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        </div>
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Номер договора</label>
+          <input bind:value={form.contract_no} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
         </div>
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Описание</label>

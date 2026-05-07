@@ -8,8 +8,23 @@
   --color-surface-800: #1e293b;
   --color-accent-amber: #f59e0b;
   --color-accent-emerald: #10b981;
+  font-size: 80%;
 }
 
 body {
   @apply bg-surface-950 text-zinc-100 font-sans antialiased;
+}
+
+table th,
+table td {
+  padding-top: 0.35rem !important;
+  padding-bottom: 0.35rem !important;
+  line-height: 1.15 !important;
+}
+
+button,
+input,
+select,
+textarea {
+  line-height: 1.15;
 }

@@ -6,7 +6,7 @@
   let parts: Part[] = [];
   let loading = true;
   let modalOpen = false;
-  let form: PartCreate = { name: '', description: null, is_active: true };
+  let form: PartCreate = { name: '', cipher: null, article: null, description: null };
   let editingId: number | null = null;
 
   onMount(load);
@@ -24,13 +24,13 @@
 
   function openCreate() {
     editingId = null;
-    form = { name: '', description: null, is_active: true };
+    form = { name: '', cipher: null, article: null, description: null };
     modalOpen = true;
   }
 
   function openEdit(p: Part) {
     editingId = p.id;
-    form = { name: p.name, description: p.description ?? null, is_active: p.is_active };
+    form = { name: p.name, cipher: p.cipher ?? null, article: p.article ?? null, description: p.description ?? null };
     modalOpen = true;
   }
 
@@ -76,8 +76,9 @@
           <tr>
             <th class="px-4 py-3 font-medium">ID</th>
             <th class="px-4 py-3 font-medium">Название</th>
+            <th class="px-4 py-3 font-medium">Шифр</th>
+            <th class="px-4 py-3 font-medium">Артикул</th>
             <th class="px-4 py-3 font-medium">Описание</th>
-            <th class="px-4 py-3 font-medium">Активна</th>
             <th class="px-4 py-3 w-24"></th>
           </tr>
         </thead>
@@ -86,8 +87,9 @@
             <tr class="hover:bg-zinc-800/50">
               <td class="px-4 py-3 font-mono text-sm">{p.id ?? '—'}</td>
               <td class="px-4 py-3">{p.name}</td>
+              <td class="px-4 py-3 text-zinc-300">{p.cipher || '—'}</td>
+              <td class="px-4 py-3 text-zinc-300">{p.article || '—'}</td>
               <td class="px-4 py-3 text-zinc-400 max-w-xs truncate">{p.description || '—'}</td>
-              <td class="px-4 py-3">{p.is_active ? 'Да' : 'Нет'}</td>
               <td class="px-4 py-3">
                 <button on:click={() => openEdit(p)} class="text-amber-500 hover:text-amber-400 mr-2">Изм.</button>
                 <button on:click={() => remove(p.id)} class="text-red-400 hover:text-red-300">Удал.</button>
@@ -116,12 +118,16 @@
           <input bind:value={form.name} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
         </div>
         <div>
+          <label class="block text-sm text-zinc-400 mb-1">Шифр</label>
+          <input bind:value={form.cipher} placeholder="Опционально" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        </div>
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Артикул</label>
+          <input bind:value={form.article} placeholder="Опционально" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        </div>
+        <div>
           <label class="block text-sm text-zinc-400 mb-1">Описание</label>
           <textarea bind:value={form.description} rows="2" placeholder="Опционально" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
-        </div>
-        <div class="flex items-center gap-2">
-          <input type="checkbox" bind:checked={form.is_active} id="active" />
-          <label for="active" class="text-sm text-zinc-400">Активна</label>
         </div>
         <div class="flex gap-2 pt-2">
           <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Сохранить</button>

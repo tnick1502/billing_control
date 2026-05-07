@@ -19,7 +19,6 @@ class DeviceBase(BaseModel):
     primary_name: str
     model: str | None = None
     description: str | None = None
-    is_active: bool = True
 
 
 class DeviceCreate(DeviceBase):
@@ -30,7 +29,6 @@ class DeviceUpdate(BaseModel):
     primary_name: str | None = None
     model: str | None = None
     description: str | None = None
-    is_active: bool | None = None
 
 
 class DeviceRead(DeviceBase):
@@ -53,8 +51,9 @@ class DeviceAliasRead(BaseModel):
 
 class PartBase(BaseModel):
     name: str
+    cipher: str | None = None
+    article: str | None = None
     description: str | None = None
-    is_active: bool = True
 
 
 class PartCreate(PartBase):
@@ -63,8 +62,9 @@ class PartCreate(PartBase):
 
 class PartUpdate(BaseModel):
     name: str | None = None
+    cipher: str | None = None
+    article: str | None = None
     description: str | None = None
-    is_active: bool | None = None
 
 
 class PartRead(PartBase):
@@ -75,8 +75,9 @@ class PartRead(PartBase):
 
 
 class OrderBase(BaseModel):
-    status: str = "draft"
     order_date: date
+    customer: str | None = None
+    contract_no: str | None = None
     description: str | None = None
 
 
@@ -85,8 +86,9 @@ class OrderCreate(OrderBase):
 
 
 class OrderUpdate(BaseModel):
-    status: str | None = None
     order_date: date | None = None
+    customer: str | None = None
+    contract_no: str | None = None
     description: str | None = None
 
 
@@ -242,7 +244,6 @@ class MonthlyPlanRead(BaseModel):
 
 class MonthlyPlanGenerate(BaseModel):
     month: date
-    order_status: str | None = None  # None = все заказы (draft, confirmed и т.д.)
     replace: bool = True  # Удалить существующий план за месяц и создать новый
 
 
@@ -274,11 +275,11 @@ class MonthlyPlanPartQtyDeliveredUpdate(BaseModel):
 
 
 class InvoiceBase(BaseModel):
-    invoice_no: str | None = None  # Игнорируется при создании — подставляется str(id)
+    invoice_no: str
     invoice_date: date
-    currency: str = "RUB"
+    supplier: str | None = None
     total_amount: Decimal | None = None
-    status: str = "received"
+    payment_date: date | None = None
     description: str | None = None
     note: str | None = None
 
@@ -288,10 +289,11 @@ class InvoiceCreate(InvoiceBase):
 
 
 class InvoiceUpdate(BaseModel):
+    invoice_no: str | None = None
     invoice_date: date | None = None
-    currency: str | None = None
+    supplier: str | None = None
     total_amount: Decimal | None = None
-    status: str | None = None
+    payment_date: date | None = None
     description: str | None = None
     note: str | None = None
 
@@ -300,9 +302,9 @@ class InvoiceRead(BaseModel):
     id: int
     invoice_no: str
     invoice_date: date
-    currency: str
+    supplier: str | None
     total_amount: Decimal | None
-    status: str
+    payment_date: date | None
     description: str | None
     note: str | None
     created_at: datetime
@@ -326,13 +328,11 @@ class InvoicePartLinkCreate(BaseModel):
     plan_id: int
     part_id: int
     qty_covered: Decimal | None = None
-    amount_allocated: Decimal | None = None
     note: str | None = None
 
 
 class InvoicePartLinkUpdate(BaseModel):
     qty_covered: Decimal | None = None
-    amount_allocated: Decimal | None = None
     note: str | None = None
 
 
@@ -342,7 +342,6 @@ class InvoicePartLinkRead(BaseModel):
     plan_id: int
     part_id: int
     qty_covered: Decimal | None
-    amount_allocated: Decimal | None
     note: str | None
     created_at: datetime
 

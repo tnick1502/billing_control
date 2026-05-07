@@ -14,10 +14,22 @@ log = logging.getLogger(__name__)
 # PostgreSQL (docker / prod)
 _PG_STATEMENTS = [
     "ALTER TABLE devices ADD COLUMN IF NOT EXISTS description TEXT",
+    "ALTER TABLE devices DROP COLUMN IF EXISTS is_active",
     "ALTER TABLE parts ADD COLUMN IF NOT EXISTS description TEXT",
+    "ALTER TABLE parts ADD COLUMN IF NOT EXISTS cipher VARCHAR(128)",
+    "ALTER TABLE parts ADD COLUMN IF NOT EXISTS article VARCHAR(128)",
+    "ALTER TABLE parts DROP COLUMN IF EXISTS is_active",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS description TEXT",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer VARCHAR(255)",
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS contract_no VARCHAR(128)",
+    "ALTER TABLE orders DROP COLUMN IF EXISTS status",
     "ALTER TABLE device_bom_versions ADD COLUMN IF NOT EXISTS description TEXT",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS description TEXT",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS supplier VARCHAR(255)",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_date DATE",
+    "ALTER TABLE invoices DROP COLUMN IF EXISTS currency",
+    "ALTER TABLE invoices DROP COLUMN IF EXISTS status",
+    "ALTER TABLE invoice_part_links DROP COLUMN IF EXISTS amount_allocated",
     "ALTER TABLE parts DROP COLUMN IF EXISTS uom",
     "ALTER TABLE monthly_plan_parts ADD COLUMN IF NOT EXISTS qty_delivered NUMERIC(18,6) NOT NULL DEFAULT 0",
 ]

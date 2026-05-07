@@ -38,7 +38,7 @@ async def create_monthly_plan(data: MonthlyPlanCreate, session: AsyncSession = D
 @router.post("/generate", response_model=MonthlyPlanRead)
 async def generate_plan(data: MonthlyPlanGenerate, session: AsyncSession = Depends(get_db)):
     try:
-        plan = await do_generate(session, data.month, data.order_status, data.replace)
+        plan = await do_generate(session, data.month, data.replace)
         await session.flush()
         await session.refresh(plan)
         return plan
@@ -129,6 +129,9 @@ async def list_plan_parts_with_coverage(plan_id: int, session: AsyncSession = De
             InvoicePartLink.part_id,
             InvoicePartLink.invoice_id,
             Invoice.invoice_no,
+            Invoice.supplier,
+            Invoice.payment_date,
+            InvoicePartLink.qty_covered,
         )
         .join(Invoice, Invoice.id == InvoicePartLink.invoice_id)
         .where(InvoicePartLink.plan_id == plan_id)
@@ -136,12 +139,24 @@ async def list_plan_parts_with_coverage(plan_id: int, session: AsyncSession = De
     invoices_by_part: dict[int, list[dict]] = {p.part_id: [] for p in parts}
     for row in links_result.all():
         invoices_by_part.setdefault(row.part_id, []).append(
-            {"link_id": row.link_id, "invoice_id": row.invoice_id, "invoice_no": row.invoice_no}
+            {
+                "link_id": row.link_id,
+                "invoice_id": row.invoice_id,
+                "invoice_no": row.invoice_no,
+                "supplier": row.supplier,
+                "payment_date": row.payment_date.isoformat() if row.payment_date else None,
+                "qty_covered": str(row.qty_covered) if row.qty_covered is not None else None,
+            }
         )
     out = []
     for p in parts:
         qty_del = p.qty_delivered
         req = p.qty_required
+        invoices = invoices_by_part.get(p.part_id, [])
+        qty_covered_total = sum(
+            (Decimal(str(inv["qty_covered"])) for inv in invoices if inv["qty_covered"] is not None),
+            Decimal("0"),
+        )
         out.append(
             {
                 "id": p.id,
@@ -151,8 +166,10 @@ async def list_plan_parts_with_coverage(plan_id: int, session: AsyncSession = De
                 "qty_final": str(p.qty_final),
                 "qty_delivered": str(qty_del),
                 "created_at": p.created_at.isoformat(),
-                "has_invoice": len(invoices_by_part.get(p.part_id, [])) > 0,
-                "invoices": invoices_by_part.get(p.part_id, []),
+                "has_invoice": len(invoices) > 0,
+                "invoices": invoices,
+                "qty_covered_total": str(qty_covered_total),
+                "coverage_complete": bool(qty_covered_total >= req),
                 "delivery_complete": bool(qty_del >= req),
             }
         )

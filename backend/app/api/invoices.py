@@ -1,4 +1,3 @@
-import uuid
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -29,12 +28,13 @@ async def list_invoices(session: AsyncSession = Depends(get_db)):
 
 
 def _clean_invoice_payload(d: dict) -> dict:
-    """Пустые строки из форм → None; invoice_no с клиента не используется."""
+    """Пустые строки из форм → None; суммы приводим к Decimal."""
     out = dict(d)
-    out.pop("invoice_no", None)
-    for key in ("total_amount", "note", "description"):
+    for key in ("invoice_no", "supplier", "total_amount", "note", "description"):
         if out.get(key) == "":
             out[key] = None
+    if isinstance(out.get("invoice_no"), str):
+        out["invoice_no"] = out["invoice_no"].strip()
     if out.get("total_amount") is not None:
         try:
             out["total_amount"] = Decimal(str(out["total_amount"]))
@@ -46,12 +46,10 @@ def _clean_invoice_payload(d: dict) -> dict:
 @router.post("", response_model=InvoiceRead)
 async def create_invoice(data: InvoiceCreate, session: AsyncSession = Depends(get_db)):
     dump = _clean_invoice_payload(data.model_dump())
-    # Временный уникальный ключ под NOT NULL + uq (invoice_no, invoice_date)
-    dump["invoice_no"] = f"tmp-{uuid.uuid4().hex}"
+    if not dump.get("invoice_no"):
+        raise HTTPException(400, "Номер счета обязателен")
     invoice = Invoice(**dump)
     session.add(invoice)
-    await session.flush()
-    invoice.invoice_no = str(invoice.id)
     await session.flush()
     await session.refresh(invoice)
     return invoice
@@ -73,10 +71,13 @@ async def update_invoice(invoice_id: int, data: InvoiceUpdate, session: AsyncSes
     if not invoice:
         raise HTTPException(404, "Invoice not found")
     update_data = data.model_dump(exclude_unset=True)
-    update_data.pop("invoice_no", None)  # invoice_no immutable
-    for key in ("total_amount", "note", "description"):
+    for key in ("invoice_no", "supplier", "total_amount", "note", "description"):
         if update_data.get(key) == "":
             update_data[key] = None
+    if isinstance(update_data.get("invoice_no"), str):
+        update_data["invoice_no"] = update_data["invoice_no"].strip()
+    if "invoice_no" in update_data and not update_data["invoice_no"]:
+        raise HTTPException(400, "Номер счета обязателен")
     if update_data.get("total_amount") is not None:
         try:
             update_data["total_amount"] = Decimal(str(update_data["total_amount"]))

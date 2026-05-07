@@ -12,7 +12,7 @@
   let bomItems: BomItem[] = [];
   let loading = true;
   let bomModalOpen = false;
-  let bomForm: BomVersionCreate = { name: null, description: null, version: 1, status: 'draft' };
+  let bomForm: BomVersionCreate = { name: null, description: null, version: 1, status: 'current' };
   let itemModalOpen = false;
   let itemForm: BomItemCreate = { part_id: 0, qty_per_device: '1', note: null };
   let editingItemId: number | null = null;
@@ -59,7 +59,7 @@
 
   function openCreateBom() {
     if (!selectedDevice) return;
-    bomForm = { name: null, description: null, version: boms.length + 1, status: 'draft' };
+    bomForm = { name: null, description: null, version: boms.length + 1, status: 'current' };
     bomModalOpen = true;
   }
 
@@ -128,9 +128,8 @@
 
   const BOM_STATUSES: { value: string; label: string }[] = [
     { value: 'active', label: 'Активная' },
-    { value: 'current', label: 'Текущая' },
-    { value: 'archived', label: 'Архив' },
-    { value: 'draft', label: 'Черновик' },
+    { value: 'current', label: 'Рабочая' },
+    { value: 'archived', label: 'Архивная' },
   ];
   function statusLabel(s: string) {
     return BOM_STATUSES.find((x) => x.value === s)?.label ?? s;
@@ -183,10 +182,10 @@
                   <button on:click={() => setBomStatus(b.id, 'active')} class="text-emerald-500 text-sm px-2">Активная</button>
                 {/if}
                 {#if b.status !== 'current'}
-                  <button on:click={() => setBomStatus(b.id, 'current')} class="text-amber-400 text-sm px-2">Текущая</button>
+                  <button on:click={() => setBomStatus(b.id, 'current')} class="text-amber-400 text-sm px-2">Рабочая</button>
                 {/if}
                 {#if b.status !== 'archived'}
-                  <button on:click={() => setBomStatus(b.id, 'archived')} class="text-zinc-400 text-sm px-2">В архив</button>
+                  <button on:click={() => setBomStatus(b.id, 'archived')} class="text-zinc-400 text-sm px-2">Архивная</button>
                 {/if}
               </div>
             </div>

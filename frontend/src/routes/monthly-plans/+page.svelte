@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import { formatQty, formatIntegerQty } from '$lib/format';
-  import type { MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPartWithCoverage, InvoiceCreate } from '$lib/api';
+  import { formatQty, formatIntegerQty, formatAmount, formatDate } from '$lib/format';
+  import type { MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPartWithCoverage, InvoiceCreate, Invoice, PartInvoiceCoverage } from '$lib/api';
 
   type PlanDetail = { devices: MonthlyPlanDevice[]; parts: MonthlyPlanPartWithCoverage[] };
 
@@ -10,7 +10,7 @@
   let plansDetail: Record<number, PlanDetail> = {};
   let devices: { id: number; primary_name: string }[] = [];
   let parts: { id: number; name: string }[] = [];
-  let invoices: { id: number; invoice_no: string }[] = [];
+  let invoices: Invoice[] = [];
   let loading = true;
   let loadError = '';
   let generateModalOpen = false;
@@ -25,12 +25,21 @@
   let linkPlanId: number | null = null;
   let linkPartIds: number[] = [];
   let linkInvoiceId = 0;
+  let linkQtyByPart: Record<number, string> = {};
 
   let createInvoiceModalOpen = false;
   let createInvoicePlanId: number | null = null;
   let createInvoicePartIds: number[] = [];
-  let createInvoiceForm: InvoiceCreate = { invoice_date: new Date().toISOString().slice(0, 10), currency: 'RUB', status: 'received' };
+  let createInvoiceQtyByPart: Record<number, string> = {};
+  let createInvoiceForm: InvoiceCreate = emptyInvoiceForm();
   let createInvoiceFileInput: HTMLInputElement;
+
+  let editInvoiceModalOpen = false;
+  let editInvoiceId = 0;
+  let editInvoiceLinkId = 0;
+  let editInvoiceForm: InvoiceCreate = emptyInvoiceForm();
+  let editInvoiceLinkQty = '';
+  let expandedInvoiceLinks: Record<number, boolean> = {};
 
   function refreshDeliverDrafts() {
     const d: Record<number, string> = {};
@@ -63,7 +72,7 @@
       ]);
       devices = devs.map((d) => ({ id: d.id, primary_name: d.primary_name }));
       parts = pts.map((x) => ({ id: x.id, name: x.name }));
-      invoices = invs.map((i) => ({ id: i.id, invoice_no: i.invoice_no }));
+      invoices = invs;
 
       for (const p of list) {
         const pid = Number(p.id);
@@ -156,6 +165,51 @@
     return Number(p.qty_delivered ?? 0) >= Number(p.qty_required);
   }
 
+  function coverageOk(p: MonthlyPlanPartWithCoverage) {
+    if (p.coverage_complete != null) return p.coverage_complete;
+    return Number(p.qty_covered_total ?? 0) >= Number(p.qty_required);
+  }
+
+  function toggleInvoiceDetails(linkId: number) {
+    expandedInvoiceLinks = { ...expandedInvoiceLinks, [linkId]: !expandedInvoiceLinks[linkId] };
+  }
+
+  function planPart(planId: number | null, partId: number) {
+    if (!planId) return null;
+    return plansDetail[planId]?.parts?.find((p) => p.part_id === partId) ?? null;
+  }
+
+  function initialQtyByPart(planId: number, partIds: number[]) {
+    const next: Record<number, string> = {};
+    for (const partId of partIds) {
+      const row = planPart(planId, partId);
+      const remaining = Math.max(Number(row?.qty_required ?? 0) - Number(row?.qty_covered_total ?? 0), 0);
+      next[partId] = formatIntegerQty(remaining);
+    }
+    return next;
+  }
+
+  function emptyInvoiceForm(): InvoiceCreate {
+    return {
+      invoice_no: '',
+      invoice_date: new Date().toISOString().slice(0, 10),
+      supplier: null,
+      total_amount: null,
+      payment_date: null,
+    };
+  }
+
+  function invoicePayload(form: InvoiceCreate): InvoiceCreate {
+    return {
+      ...form,
+      supplier: form.supplier || null,
+      total_amount: form.total_amount || null,
+      payment_date: form.payment_date || null,
+      description: form.description || null,
+      note: form.note || null,
+    };
+  }
+
   function openLinkModal(planId: number, partIds: number[]) {
     if (invoices.length === 0) {
       alert('Сначала создайте счёт в разделе Счета');
@@ -164,6 +218,7 @@
     linkPlanId = planId;
     linkPartIds = partIds;
     linkInvoiceId = invoices[0].id;
+    linkQtyByPart = initialQtyByPart(planId, partIds);
     linkModalOpen = true;
   }
 
@@ -171,7 +226,11 @@
     if (!linkPlanId || !linkInvoiceId) return;
     try {
       for (const partId of linkPartIds) {
-        await api.invoices.parts.create(linkInvoiceId, { plan_id: linkPlanId, part_id: partId });
+        await api.invoices.parts.create(linkInvoiceId, {
+          plan_id: linkPlanId,
+          part_id: partId,
+          qty_covered: linkQtyByPart[partId] || null,
+        });
       }
       linkModalOpen = false;
       await load({ quiet: true });
@@ -183,7 +242,8 @@
   function openCreateInvoiceModal(planId: number, partIds: number[]) {
     createInvoicePlanId = planId;
     createInvoicePartIds = partIds;
-    createInvoiceForm = { invoice_date: new Date().toISOString().slice(0, 10), currency: 'RUB', status: 'received' };
+    createInvoiceQtyByPart = initialQtyByPart(planId, partIds);
+    createInvoiceForm = emptyInvoiceForm();
     if (createInvoiceFileInput) createInvoiceFileInput.value = '';
     createInvoiceModalOpen = true;
   }
@@ -194,12 +254,51 @@
       return;
     }
     try {
-      const inv = await api.invoices.create(createInvoiceForm);
+      const inv = await api.invoices.create(invoicePayload(createInvoiceForm));
       await api.invoices.upload(inv.id, createInvoiceFileInput.files[0]);
       for (const partId of createInvoicePartIds) {
-        await api.invoices.parts.create(inv.id, { plan_id: createInvoicePlanId, part_id: partId });
+        await api.invoices.parts.create(inv.id, {
+          plan_id: createInvoicePlanId,
+          part_id: partId,
+          qty_covered: createInvoiceQtyByPart[partId] || null,
+        });
       }
       createInvoiceModalOpen = false;
+      await load({ quiet: true });
+    } catch (e) {
+      alert((e as Error).message);
+    }
+  }
+
+  async function openEditInvoiceModal(inv: PartInvoiceCoverage) {
+    try {
+      const full = await api.invoices.get(inv.invoice_id);
+      editInvoiceId = full.id;
+      editInvoiceLinkId = inv.link_id;
+      editInvoiceForm = {
+        invoice_no: full.invoice_no,
+        invoice_date: full.invoice_date,
+        supplier: full.supplier ?? null,
+        total_amount: full.total_amount,
+        payment_date: full.payment_date ?? null,
+        description: full.description ?? null,
+        note: full.note ?? null,
+      };
+      editInvoiceLinkQty = formatIntegerQty(inv.qty_covered);
+      editInvoiceModalOpen = true;
+    } catch (e) {
+      alert((e as Error).message);
+    }
+  }
+
+  async function saveEditInvoice() {
+    if (!editInvoiceId || !editInvoiceLinkId) return;
+    try {
+      await api.invoices.update(editInvoiceId, invoicePayload(editInvoiceForm));
+      await api.invoices.parts.update(editInvoiceId, editInvoiceLinkId, {
+        qty_covered: editInvoiceLinkQty || null,
+      });
+      editInvoiceModalOpen = false;
       await load({ quiet: true });
     } catch (e) {
       alert((e as Error).message);
@@ -245,7 +344,7 @@
           </div>
 
           {#if data}
-            {@const uncovered = (data.parts ?? []).filter((p) => !p.has_invoice)}
+            {@const uncovered = (data.parts ?? []).filter((p) => !coverageOk(p))}
             <div class="p-6">
               <h3 class="text-sm font-medium text-zinc-400 mb-2">Приборы</h3>
               <table class="w-full mb-6 rounded-xl border border-zinc-700 overflow-hidden">
@@ -274,7 +373,7 @@
                     <th class="px-4 py-3 font-medium">ID</th>
                     <th class="px-4 py-3 font-medium">Деталь</th>
                     <th class="px-4 py-3 font-medium">Требуется</th>
-                    <th class="px-4 py-3 font-medium">Покрытие счётом</th>
+                    <th class="px-4 py-3 font-medium">Покрытие счетами</th>
                     <th class="px-4 py-3 font-medium">Поставлено</th>
                   </tr>
                 </thead>
@@ -284,35 +383,82 @@
                       <td class="px-4 py-3 font-mono text-sm align-top">{partId(p.part_id) ?? '—'}</td>
                       <td class="px-4 py-3 align-top">{partName(p.part_id)}</td>
                       <td class="px-4 py-3 font-mono align-top">{formatQty(p.qty_required)}</td>
-                      <td
-                        class="px-4 py-3 align-top {p.has_invoice
-                          ? 'bg-emerald-500/15 border-l-2 border-emerald-500/40'
-                          : 'bg-red-500/15 border-l-2 border-red-500/40'}"
-                      >
+                      <td class="px-4 py-3 align-top">
+                        <div
+                          class="mb-1 rounded border px-2 py-1 text-[11px] {coverageOk(p)
+                            ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-200'
+                            : 'bg-red-500/15 border-red-500/40 text-red-200'}"
+                        >
+                          Покрыто: <span class="font-mono">{formatIntegerQty(p.qty_covered_total)}</span>
+                          из <span class="font-mono">{formatIntegerQty(p.qty_required)}</span>
+                        </div>
                         {#if p.has_invoice}
-                          <ul class="space-y-1 text-sm">
+                          <ul class="space-y-1 text-[11px]">
                             {#each p.invoices ?? [] as inv}
-                              <li class="flex flex-wrap items-center gap-2 text-emerald-400 font-mono">
-                                <span>№{inv.invoice_id}</span>
-                                <button
-                                  type="button"
-                                  class="text-xs text-red-400 hover:text-red-300 underline"
-                                  on:click={() => unlinkLink(inv.invoice_id, inv.link_id)}
-                                >
-                                  Отвязать
-                                </button>
+                              <li
+                                class="rounded border px-2 py-1 {inv.payment_date
+                                  ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-100'
+                                  : 'bg-red-500/15 border-red-500/40 text-red-100'}"
+                              >
+                                <div class="flex items-center gap-2 min-w-0">
+                                  <span class="font-mono shrink-0">№{inv.invoice_no}</span>
+                                  <span class="min-w-0 flex-1 truncate text-zinc-300">{inv.supplier || 'без поставщика'}</span>
+                                  <span class="font-mono shrink-0">покр. {formatIntegerQty(inv.qty_covered)}</span>
+                                  <span class="shrink-0">опл. {formatDate(inv.payment_date)}</span>
+                                  <button
+                                    type="button"
+                                    class="shrink-0 text-xs text-sky-300 hover:text-sky-200 underline"
+                                    on:click={() => toggleInvoiceDetails(inv.link_id)}
+                                  >
+                                    {expandedInvoiceLinks[inv.link_id] ? 'Скрыть' : 'Детали'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    class="shrink-0 text-xs text-amber-300 hover:text-amber-200 underline"
+                                    on:click={() => openEditInvoiceModal(inv)}
+                                  >
+                                    Изм.
+                                  </button>
+                                  <button
+                                    type="button"
+                                    class="shrink-0 text-xs text-red-300 hover:text-red-200 underline"
+                                    on:click={() => unlinkLink(inv.invoice_id, inv.link_id)}
+                                  >
+                                    Отвязать
+                                  </button>
+                                </div>
+                                {#if expandedInvoiceLinks[inv.link_id]}
+                                  <div class="mt-1 space-y-0.5 border-t border-white/10 pt-1 text-zinc-300">
+                                    <div class="font-mono">№{inv.invoice_no}</div>
+                                    {#if inv.supplier}
+                                      <div>{inv.supplier}</div>
+                                    {/if}
+                                    <div class="font-mono">Покрыто: {formatIntegerQty(inv.qty_covered)}</div>
+                                    <div class={inv.payment_date ? 'text-emerald-300' : 'text-red-300'}>
+                                      оплата: {formatDate(inv.payment_date)}
+                                    </div>
+                                  </div>
+                                {/if}
                               </li>
                             {/each}
                           </ul>
-                        {:else}
+                        {/if}
+                        <div class="mt-2 flex flex-wrap gap-2">
                           <button
                             type="button"
                             on:click={() => openLinkModal(plan.id, [p.part_id])}
                             class="text-amber-500 hover:text-amber-400 text-sm"
                           >
-                            Привязать счёт
+                            {p.has_invoice ? 'Привязать доп. счёт' : 'Привязать счёт'}
                           </button>
-                        {/if}
+                          <button
+                            type="button"
+                            on:click={() => openCreateInvoiceModal(plan.id, [p.part_id])}
+                            class="text-emerald-500 hover:text-emerald-400 text-sm"
+                          >
+                            Создать счёт
+                          </button>
+                        </div>
                       </td>
                       <td
                         class="px-4 py-3 align-top {deliveryOk(p)
@@ -405,6 +551,44 @@
   </div>
 {/if}
 
+{#if editInvoiceModalOpen}
+  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" on:click={() => editInvoiceModalOpen = false} role="button" tabindex="0">
+    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
+      <h2 class="text-lg font-semibold text-white mb-4">Редактировать счёт</h2>
+      <form on:submit|preventDefault={saveEditInvoice} class="space-y-4">
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Номер счёта</label>
+          <input bind:value={editInvoiceForm.invoice_no} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
+        </div>
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Поставщик</label>
+          <input bind:value={editInvoiceForm.supplier} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        </div>
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Дата</label>
+          <input type="date" bind:value={editInvoiceForm.invoice_date} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
+        </div>
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Дата оплаты</label>
+          <input type="date" bind:value={editInvoiceForm.payment_date} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        </div>
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Сумма счёта</label>
+          <input type="number" step="0.01" bind:value={editInvoiceForm.total_amount} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        </div>
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Покрыто</label>
+          <input type="number" step="1" min="0" bind:value={editInvoiceLinkQty} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        </div>
+        <div class="flex gap-2 pt-2">
+          <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Сохранить</button>
+          <button type="button" on:click={() => editInvoiceModalOpen = false} class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600">Отмена</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{/if}
+
 {#if linkModalOpen && linkPlanId}
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" on:click={() => linkModalOpen = false} role="button" tabindex="0">
     <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
@@ -414,9 +598,30 @@
           <label class="block text-sm text-zinc-400 mb-1">Счёт</label>
           <select bind:value={linkInvoiceId} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required>
             {#each invoices as i}
-              <option value={i.id}>№{i.id} ({i.invoice_no})</option>
+              <option value={i.id}>№{i.invoice_no}{i.supplier ? ` · ${i.supplier}` : ''}</option>
             {/each}
           </select>
+        </div>
+        <div class="space-y-2">
+          <label class="block text-sm text-zinc-400">Покрываемый объем</label>
+          {#each linkPartIds as partId}
+            <div class="flex items-center gap-2">
+              <span class="min-w-0 flex-1 text-sm text-zinc-300 truncate">{partName(partId)}</span>
+              <input
+                type="number"
+                step="1"
+                min="0"
+                value={linkQtyByPart[partId] ?? ''}
+                on:input={(e) => {
+                  const el = e.currentTarget;
+                  if (el instanceof HTMLInputElement) {
+                    linkQtyByPart = { ...linkQtyByPart, [partId]: el.value };
+                  }
+                }}
+                class="w-32 px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
+              />
+            </div>
+          {/each}
         </div>
         <div class="flex gap-2 pt-2">
           <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Привязать</button>
@@ -433,12 +638,45 @@
       <h2 class="text-lg font-semibold text-white mb-4">Создать счёт и привязать к {createInvoicePartIds.length} деталям</h2>
       <form on:submit|preventDefault={saveCreateInvoice} class="space-y-4">
         <div>
+          <label class="block text-sm text-zinc-400 mb-1">Номер счёта</label>
+          <input bind:value={createInvoiceForm.invoice_no} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
+        </div>
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Поставщик</label>
+          <input bind:value={createInvoiceForm.supplier} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        </div>
+        <div>
           <label class="block text-sm text-zinc-400 mb-1">Дата</label>
           <input type="date" bind:value={createInvoiceForm.invoice_date} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
         </div>
         <div>
-          <label class="block text-sm text-zinc-400 mb-1">Валюта</label>
-          <input bind:value={createInvoiceForm.currency} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" placeholder="RUB" />
+          <label class="block text-sm text-zinc-400 mb-1">Дата оплаты</label>
+          <input type="date" bind:value={createInvoiceForm.payment_date} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        </div>
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Сумма</label>
+          <input type="number" step="0.01" bind:value={createInvoiceForm.total_amount} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        </div>
+        <div class="space-y-2">
+          <label class="block text-sm text-zinc-400">Покрываемый объем</label>
+          {#each createInvoicePartIds as partId}
+            <div class="flex items-center gap-2">
+              <span class="min-w-0 flex-1 text-sm text-zinc-300 truncate">{partName(partId)}</span>
+              <input
+                type="number"
+                step="1"
+                min="0"
+                value={createInvoiceQtyByPart[partId] ?? ''}
+                on:input={(e) => {
+                  const el = e.currentTarget;
+                  if (el instanceof HTMLInputElement) {
+                    createInvoiceQtyByPart = { ...createInvoiceQtyByPart, [partId]: el.value };
+                  }
+                }}
+                class="w-32 px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
+              />
+            </div>
+          {/each}
         </div>
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Файл счёта <span class="text-red-400">*</span></label>

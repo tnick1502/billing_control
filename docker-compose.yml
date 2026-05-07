@@ -3,6 +3,8 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
     healthcheck:
       test:
         [
@@ -30,6 +32,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    ports:
+      - "80:3000"
     healthcheck:
       test:
         [
@@ -42,20 +46,9 @@ services:
       start_period: 60s
     environment:
       ORIGIN: ${PUBLIC_ORIGIN}
+      BACKEND_ORIGIN: http://backend:8000
       PROTOCOL_HEADER: x-forwarded-proto
       HOST_HEADER: x-forwarded-host
     depends_on:
       backend:
-        condition: service_healthy
-
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-    volumes:
-      - ./nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      backend:
-        condition: service_healthy
-      frontend:
         condition: service_healthy

@@ -6,32 +6,50 @@
 
 - **Backend**: FastAPI, SQLAlchemy (async), PostgreSQL, MinIO (S3-совместимое хранилище)
 - **Frontend**: SvelteKit, Tailwind CSS
-- **Инфраструктура**: Docker Compose, nginx (обратный прокси), Poetry (Python), npm (Node)
+- **Инфраструктура**: Docker Compose, Poetry (Python), npm (Node)
 
-## Запуск через Docker Compose
+## Запуски
 
-Из корня репозитория (перед первым запуском создайте файл пароля Portainer из `.env`):
+### Обычный запуск
+
+Обычный запуск поднимает только **backend** и **frontend**. PostgreSQL и S3/MinIO берутся из `.env`.
 
 ```bash
-python3 scripts/sync-portainer-password-from-env.py
+./hard_start.sh
+```
+
+или:
+
+```bash
 docker compose up --build -d
 ```
 
-Снаружи публикуются только **80** (nginx) и **5432** (PostgreSQL). Порт **8000** бэкенда на хост не открывается — API доступен только через nginx.
+### Dev запуск
 
-### URL после запуска
+Dev запуск поднимает локальные контейнеры **PostgreSQL**, **MinIO**, **backend** и **frontend**:
+
+```bash
+./hard_start_dev.sh
+```
+
+или:
+
+```bash
+docker compose -f docker-compose.dev.yml up --build -d
+```
+
+### URL после dev запуска
 
 | Сервис | Адрес (локально) |
 |--------|------------------|
-| Приложение (UI) | http://localhost/ |
-| OpenAPI / Swagger | http://localhost/api/docs |
-| MinIO Console | http://localhost/minio/ |
-| S3 API (для presigned-ссылок из браузера) | http://localhost/minio-s3/ |
-| Portainer | http://localhost/portainer/ |
+| Приложение (UI) | http://localhost:3000/ |
+| OpenAPI / Swagger | http://localhost:8000/docs |
+| MinIO Console | http://localhost:9001/ |
+| S3 API | http://localhost:9000/ |
 
-MinIO: логин и пароль — **`MINIO_ROOT_USER`** и **`MINIO_ROOT_PASSWORD`** в `.env` (в примере — `minioadmin` / `minioadmin`).
+В обычном запуске frontend публикуется на `http://localhost/`, backend на `http://localhost:8000/`.
 
-Portainer: логин **`admin`**, пароль — из **`PORTAINER_ADMIN_PASSWORD`** в `.env`, перед запуском compose создайте файл: `python3 scripts/sync-portainer-password-from-env.py` (образ Portainer без shell, пароль передаётся только через файл `portainer_admin_password`). Только при первом создании данных Portainer.
+MinIO в dev: логин и пароль — `MINIO_ROOT_USER` и `MINIO_ROOT_PASSWORD` из окружения или `minioadmin` / `minioadmin`.
 
 ### Переменные окружения (`.env`)
 
@@ -39,13 +57,14 @@ Compose подхватывает файл **`.env`** в корне репози�
 
 На сервере или при доступе не с `localhost` задайте, как минимум:
 
-- **`PUBLIC_ORIGIN`** — публичный URL без слэша в конце, например `http://203.0.113.10` или `https://example.com`. Нужен для MinIO, presigned URL и автоматически добавляется в CORS бэкенда. Фронт за nginx берёт origin из заголовков `X-Forwarded-*`, поэтому по IP/домену приложение работает без жёсткого `ORIGIN=http://localhost` в контейнере.
-- **`S3_PUBLIC_ENDPOINT_URL`** — тот же хост + путь к S3 за nginx, например `http://203.0.113.10/minio-s3`.
+- **`PUBLIC_ORIGIN`** — публичный URL frontend без слэша в конце, например `http://203.0.113.10` или `https://example.com`.
+- **`DATABASE_URL`** — PostgreSQL URL для backend.
+- **`S3_ENDPOINT_URL`** — S3 endpoint, доступный backend.
+- **`S3_PUBLIC_ENDPOINT_URL`** — S3 endpoint, доступный браузеру для presigned-ссылок.
+- **`S3_ACCESS_KEY`** / **`S3_SECRET_KEY`** / **`S3_BUCKET`** / **`S3_REGION`** — параметры S3.
 - **`CORS_ORIGINS`** — список через запятую: ваш UI и при необходимости `PUBLIC_ORIGIN`.
-- **`MINIO_ROOT_USER`** / **`MINIO_ROOT_PASSWORD`** — MinIO и ключи S3 для бэкенда.
-- **`PORTAINER_ADMIN_PASSWORD`** — пароль админа Portainer; перед `docker compose up` выполните `python3 scripts/sync-portainer-password-from-env.py` (см. таблицу URL).
 
-Иначе ссылки «Скачать» и консоль MinIO могут указывать на неверный хост.
+Иначе ссылки «Скачать» могут указывать на неверный хост.
 
 ### Первый запуск
 
@@ -67,45 +86,17 @@ npm run dev
 
 Dev-сервер: http://localhost:5173. В `vite.config.ts` запросы **`/api/*`** проксируются на **`http://localhost:8000`** (префикс `/api` снимается).
 
-### Backend
-
-```bash
-cd backend
-poetry install
-```
-
-Нужен работающий **PostgreSQL**. Из корня репозитория:
-
-```bash
-docker compose up postgres -d
-```
-
-**MinIO:** в текущем `docker-compose.yml` порты MinIO на хост **не проброшены** — доступ к API и консоли идёт через nginx на порту 80. Для локального **uvicorn** на машине удобно поднять MinIO отдельно с публикацией портов, например:
-
-```bash
-docker run -d --name minio-dev -p 9000:9000 -p 9001:9001 \
-  -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
-  minio/minio server /data --console-address ":9001"
-```
-
-Далее:
-
-```bash
-export DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/mrp_bom_orders
-export S3_ENDPOINT_URL=http://localhost:9000
-export S3_PUBLIC_ENDPOINT_URL=http://localhost:9000
-poetry run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
+Для локального backend без контейнера используйте `docker-compose.dev.yml` для PostgreSQL/MinIO и экспортируйте `DATABASE_URL` / `S3_ENDPOINT_URL` на localhost.
 
 Схема БД поднимается при старте приложения. Изменения моделей при разработке обычно сопровождают ручным SQL или пересозданием БД.
 
 ## Скрипт `hard_start.sh`
 
-Агрессивно очищает локальный Docker (контейнеры, образы, prune), делает `git pull` и поднимает стек. Используйте только если осознаёте последствия для **всех** образов/контейнеров на машине.
+`hard_start.sh` перезапускает обычный стек. `hard_start_dev.sh` перезапускает dev стек с локальными PostgreSQL и MinIO.
 
 ## API (кратко)
 
-Базовый префикс за nginx: **`/api/`** (внутри контейнера бэкенд слушает корень).
+Frontend проксирует запросы **`/api/*`** во внутренний backend.
 
 - `GET /health` — проверка
 - `GET/POST /devices` — приборы

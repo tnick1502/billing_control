@@ -81,7 +81,7 @@ export const api = {
     list: () => fetchApi<MonthlyPlan[]>('/monthly-plans'),
     get: (id: number) => fetchApi<MonthlyPlan>(`/monthly-plans/${id}`),
     create: (data: MonthlyPlanCreate) => fetchApi<MonthlyPlan>('/monthly-plans', { method: 'POST', body: JSON.stringify(data) }),
-    generate: (data: { month: string; order_status?: string; replace?: boolean }) => fetchApi<MonthlyPlan>('/monthly-plans/generate', { method: 'POST', body: JSON.stringify(data) }),
+    generate: (data: { month: string; replace?: boolean }) => fetchApi<MonthlyPlan>('/monthly-plans/generate', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: number, data: Partial<MonthlyPlanCreate>) => fetchApi<MonthlyPlan>(`/monthly-plans/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     delete: (id: number) => fetchApi<void>(`/monthly-plans/${id}`, { method: 'DELETE' }),
     devices: (planId: number) => fetchApi<MonthlyPlanDevice[]>(`/monthly-plans/${planId}/devices`),
@@ -156,14 +156,12 @@ export interface Device {
   primary_name: string;
   model: string | null;
   description: string | null;
-  is_active: boolean;
   created_at: string;
 }
 export interface DeviceCreate {
   primary_name: string;
   model?: string | null;
   description?: string | null;
-  is_active?: boolean;
 }
 export interface DeviceAlias {
   id: number;
@@ -175,26 +173,30 @@ export interface DeviceAlias {
 export interface Part {
   id: number;
   name: string;
+  cipher: string | null;
+  article: string | null;
   description: string | null;
-  is_active: boolean;
   created_at: string;
 }
 export interface PartCreate {
   name: string;
+  cipher?: string | null;
+  article?: string | null;
   description?: string | null;
-  is_active?: boolean;
 }
 
 export interface Order {
   id: number;
-  status: string;
   order_date: string;
+  customer: string | null;
+  contract_no: string | null;
   description: string | null;
   created_at: string;
 }
 export interface OrderCreate {
-  status?: string;
   order_date: string;
+  customer?: string | null;
+  contract_no?: string | null;
   description?: string | null;
 }
 export interface BomVersionBrief {
@@ -304,10 +306,15 @@ export interface PartInvoiceCoverage {
   link_id: number;
   invoice_id: number;
   invoice_no: string;
+  supplier: string | null;
+  payment_date: string | null;
+  qty_covered: string | null;
 }
 export interface MonthlyPlanPartWithCoverage extends MonthlyPlanPart {
   has_invoice: boolean;
   invoices?: PartInvoiceCoverage[];
+  qty_covered_total?: string;
+  coverage_complete?: boolean;
   /** После обновления API; иначе считается по qty_delivered и qty_required */
   delivery_complete?: boolean;
 }
@@ -323,18 +330,19 @@ export interface Invoice {
   id: number;
   invoice_no: string;
   invoice_date: string;
-  currency: string;
+  supplier: string | null;
   total_amount: string | null;
-  status: string;
+  payment_date: string | null;
   description: string | null;
   note: string | null;
   created_at: string;
 }
 export interface InvoiceCreate {
+  invoice_no: string;
   invoice_date: string;
-  currency?: string;
+  supplier?: string | null;
   total_amount?: string | null;
-  status?: string;
+  payment_date?: string | null;
   description?: string | null;
   note?: string | null;
 }
@@ -344,7 +352,6 @@ export interface InvoicePartLink {
   plan_id: number;
   part_id: number;
   qty_covered: string | null;
-  amount_allocated: string | null;
   note: string | null;
   created_at: string;
 }
@@ -352,6 +359,5 @@ export interface InvoicePartLinkCreate {
   plan_id: number;
   part_id: number;
   qty_covered?: string | null;
-  amount_allocated?: string | null;
   note?: string | null;
 }

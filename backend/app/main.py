@@ -27,6 +27,22 @@ async def lifespan(app: FastAPI):
 
     await ensure_schema()
 
+    # Полная очистка БД на старте. Раскомментируйте вручную, когда нужно
+    # сбросить все данные.
+    # async with async_session_maker() as session:
+    #     from app.seeds.init_data import clear_database
+    #
+    #     await clear_database(session)
+    #     await session.commit()
+    #
+    # Отдельная генерация тестовых данных после очистки. Раскомментируйте
+    # вместе с блоком выше или отдельно для пустой базы.
+    # async with async_session_maker() as session:
+    #     from app.seeds.init_data import generate_test_data
+    #
+    #     await generate_test_data(session)
+    #     await session.commit()
+
     # Ensure S3 bucket exists
     try:
         from app.services.s3_service import ensure_bucket_exists

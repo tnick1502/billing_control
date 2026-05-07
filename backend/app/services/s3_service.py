@@ -4,8 +4,18 @@ from typing import BinaryIO
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 from app.config import settings
+
+
+S3_CONFIG = Config(
+    signature_version="s3v4",
+    s3={"addressing_style": "path"},
+    connect_timeout=5,
+    read_timeout=60,
+    retries={"max_attempts": 3, "mode": "standard"},
+)
 
 
 def _client(endpoint_url: str):
@@ -15,7 +25,7 @@ def _client(endpoint_url: str):
         aws_access_key_id=settings.s3_access_key,
         aws_secret_access_key=settings.s3_secret_key,
         region_name=settings.s3_region,
-        config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+        config=S3_CONFIG,
     )
 
 
@@ -36,7 +46,10 @@ async def ensure_bucket_exists() -> None:
     def _ensure():
         try:
             client.head_bucket(Bucket=settings.s3_bucket)
-        except Exception:
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code not in {"404", "NoSuchBucket", "NotFound"}:
+                raise RuntimeError(f"S3 bucket check failed: {code}") from exc
             client.create_bucket(Bucket=settings.s3_bucket)
 
     await asyncio.to_thread(_ensure)
@@ -81,5 +94,8 @@ def get_presigned_url(bucket: str, object_key: str, expires_in: int = 3600) -> s
 
 
 async def delete_file(bucket: str, object_key: str) -> None:
-    client = get_s3_client()
-    client.delete_object(Bucket=bucket, Key=object_key)
+    def _delete():
+        client = get_s3_client()
+        client.delete_object(Bucket=bucket, Key=object_key)
+
+    await asyncio.to_thread(_delete)
