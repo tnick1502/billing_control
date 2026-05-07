@@ -1,11 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import { formatQty } from '$lib/format';
-  import type { Device, BomVersion, BomItem, BomVersionCreate, BomItemCreate } from '$lib/api';
+  import type { Device, Part, BomVersion, BomItem, BomVersionCreate, BomItemCreate } from '$lib/api';
 
   let devices: Device[] = [];
-  let parts: { id: number; name: string }[] = [];
+  let parts: Part[] = [];
   let selectedDevice: Device | null = null;
   let boms: BomVersion[] = [];
   let selectedBom: BomVersion | null = null;
@@ -14,8 +13,11 @@
   let bomModalOpen = false;
   let bomForm: BomVersionCreate = { name: null, description: null, version: 1, status: 'current' };
   let itemModalOpen = false;
-  let itemForm: BomItemCreate = { part_id: 0, qty_per_device: '1', note: null };
+  let itemForm: BomItemCreate = { part_id: 0, qty_per_device: 1, note: null };
   let editingItemId: number | null = null;
+  let partSearchQuery = '';
+
+  $: filteredParts = filterParts(partSearchQuery);
 
   onMount(load);
 
@@ -23,8 +25,7 @@
     loading = true;
     try {
       devices = await api.devices.list();
-      const p = await api.parts.list();
-      parts = p.map((x) => ({ id: x.id, name: x.name }));
+      parts = await api.parts.list();
     } catch (e) {
       console.error(e);
     } finally {
@@ -87,23 +88,38 @@
   function openAddItem() {
     if (!selectedBom) return;
     editingItemId = null;
-    itemForm = { part_id: parts[0]?.id ?? 0, qty_per_device: '1', note: null };
+    itemForm = { part_id: 0, qty_per_device: 1, note: null };
+    partSearchQuery = '';
     itemModalOpen = true;
   }
 
   function openEditItem(item: BomItem) {
     editingItemId = item.id;
-    itemForm = { part_id: item.part_id, qty_per_device: item.qty_per_device, note: item.note };
+    const q =
+      typeof item.qty_per_device === 'string' ? parseInt(item.qty_per_device, 10) : item.qty_per_device;
+    itemForm = { part_id: item.part_id, qty_per_device: Number.isFinite(q) && q >= 1 ? q : 1, note: item.note };
+    partSearchQuery = '';
     itemModalOpen = true;
   }
 
   async function saveItem() {
     if (!selectedBom) return;
+    if (!itemForm.part_id) {
+      alert('Выберите деталь');
+      return;
+    }
+    const qtyRaw = Number(itemForm.qty_per_device);
+    const qty = Math.trunc(qtyRaw);
+    if (!Number.isFinite(qtyRaw) || qty < 1) {
+      alert('Количество на прибор — целое число не меньше 1');
+      return;
+    }
+    const payload = { ...itemForm, qty_per_device: qty };
     try {
       if (editingItemId) {
-        await api.bom.items.update(selectedBom.id, editingItemId, itemForm);
+        await api.bom.items.update(selectedBom.id, editingItemId, payload);
       } else {
-        await api.bom.items.create(selectedBom.id, itemForm);
+        await api.bom.items.create(selectedBom.id, payload);
       }
       itemModalOpen = false;
       bomItems = await api.bom.items.list(selectedBom.id);
@@ -112,18 +128,54 @@
     }
   }
 
-  async function removeItem(itemId: number) {
+  async function removeCurrentItem() {
+    if (!editingItemId) return;
     if (!selectedBom || !confirm('Удалить позицию?')) return;
     try {
-      await api.bom.items.delete(selectedBom.id, itemId);
+      await api.bom.items.delete(selectedBom.id, editingItemId);
+      itemModalOpen = false;
       bomItems = await api.bom.items.list(selectedBom.id);
     } catch (e) {
       alert((e as Error).message);
     }
   }
 
+  function handleItemRowKeydown(event: KeyboardEvent, item: BomItem) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      openEditItem(item);
+    }
+  }
+
+  function partSearchText(part: Part) {
+    return [part.name, part.article, part.cipher, part.description].filter(Boolean).join(' ').toLowerCase();
+  }
+
+  function partLabel(part: Part) {
+    return [part.name, part.article ? `арт. ${part.article}` : null, part.cipher ? `шифр ${part.cipher}` : null]
+      .filter(Boolean)
+      .join(' · ');
+  }
+
+  function selectedPartLabel() {
+    const part = parts.find((p) => p.id === itemForm.part_id);
+    return part ? partLabel(part) : 'Деталь не выбрана';
+  }
+
+  function filterParts(query: string) {
+    const q = query.trim().toLowerCase();
+    const source = q ? parts.filter((part) => partSearchText(part).includes(q)) : parts;
+    return source.slice(0, 30);
+  }
+
+  function selectPart(part: Part) {
+    itemForm = { ...itemForm, part_id: part.id };
+    partSearchQuery = partLabel(part);
+  }
+
   function partName(id: number) {
-    return parts.find((p) => p.id === id)?.name ?? id;
+    const part = parts.find((p) => p.id === id);
+    return part ? partLabel(part) : id;
   }
 
   const BOM_STATUSES: { value: string; label: string }[] = [
@@ -200,18 +252,19 @@
                 <tr>
                   <th class="px-4 py-3 font-medium">Деталь</th>
                   <th class="px-4 py-3 font-medium">Кол-во на прибор</th>
-                  <th class="px-4 py-3 w-24"></th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-zinc-800">
                 {#each bomItems as i}
-                  <tr class="hover:bg-zinc-800/50">
+                  <tr
+                    class="cursor-pointer hover:bg-zinc-800/50"
+                    role="button"
+                    tabindex="0"
+                    on:click={() => openEditItem(i)}
+                    on:keydown={(event) => handleItemRowKeydown(event, i)}
+                  >
                     <td class="px-4 py-3">{partName(i.part_id)}</td>
-                    <td class="px-4 py-3 font-mono">{formatQty(i.qty_per_device)}</td>
-                    <td class="px-4 py-3">
-                      <button on:click={() => openEditItem(i)} class="text-amber-500 text-sm mr-2">Изм.</button>
-                      <button on:click={() => removeItem(i.id)} class="text-red-400 text-sm">Удал.</button>
-                    </td>
+                    <td class="px-4 py-3 font-mono">{i.qty_per_device}</td>
                   </tr>
                 {/each}
               </tbody>
@@ -266,19 +319,54 @@
       <form on:submit|preventDefault={saveItem} class="space-y-4">
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Деталь</label>
-          <select bind:value={itemForm.part_id} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required>
-            {#each parts as p}
-              <option value={p.id}>{p.name}</option>
-            {/each}
-          </select>
+          <input
+            type="search"
+            bind:value={partSearchQuery}
+            placeholder="Введите название, артикул, шифр или описание"
+            class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
+          />
+          <div class="mt-2 rounded-lg border border-zinc-700 bg-zinc-950/70">
+            <div class="border-b border-zinc-800 px-3 py-2 text-xs text-zinc-400">
+              Выбрано: <span class="text-zinc-100">{selectedPartLabel()}</span>
+            </div>
+            <div class="max-h-56 overflow-y-auto p-1">
+              {#if filteredParts.length === 0}
+                <div class="px-3 py-2 text-sm text-zinc-500">Детали не найдены</div>
+              {:else}
+                {#each filteredParts as p}
+                  <button
+                    type="button"
+                    on:click={() => selectPart(p)}
+                    class="block w-full rounded-md px-3 py-2 text-left text-sm {itemForm.part_id === p.id ? 'bg-amber-500/20 text-amber-200' : 'text-zinc-200 hover:bg-zinc-800'}"
+                  >
+                    <div>{p.name}</div>
+                    <div class="text-xs text-zinc-500">
+                      {p.article ? `арт. ${p.article}` : 'без артикула'}{p.cipher ? ` · шифр ${p.cipher}` : ''}
+                    </div>
+                  </button>
+                {/each}
+              {/if}
+            </div>
+          </div>
         </div>
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Кол-во на прибор</label>
-          <input type="number" step="any" bind:value={itemForm.qty_per_device} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
+          <input type="number" step="1" min="1" bind:value={itemForm.qty_per_device} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
         </div>
-        <div class="flex gap-2 pt-2">
-          <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Сохранить</button>
-          <button type="button" on:click={() => itemModalOpen = false} class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600">Отмена</button>
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Примечание</label>
+          <textarea bind:value={itemForm.note} rows="2" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        </div>
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-2">
+          <div class="flex gap-2">
+            <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Сохранить</button>
+            <button type="button" on:click={() => itemModalOpen = false} class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600">Отмена</button>
+          </div>
+          {#if editingItemId}
+            <button type="button" on:click={removeCurrentItem} class="px-4 py-2 rounded-lg bg-red-950 text-red-100 ring-1 ring-red-700/60 hover:bg-red-900">
+              Удалить
+            </button>
+          {/if}
         </div>
       </form>
     </div>

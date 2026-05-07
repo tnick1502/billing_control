@@ -1,10 +1,27 @@
 const API_BASE = '/api';
+const AUTH_TOKEN_KEY = 'billing_control_auth_token';
+
+export function getAuthToken() {
+  if (typeof localStorage === 'undefined') return '';
+  return localStorage.getItem(AUTH_TOKEN_KEY) ?? '';
+}
+
+export function setAuthToken(token: string) {
+  if (typeof localStorage !== 'undefined') localStorage.setItem(AUTH_TOKEN_KEY, token);
+}
+
+export function clearAuthToken() {
+  if (typeof localStorage !== 'undefined') localStorage.removeItem(AUTH_TOKEN_KEY);
+}
 
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = getAuthToken();
+  const hasBody = options?.body != null && options.body !== '';
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
-      'Content-Type': 'application/json',
+      ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options?.headers,
     },
   });
@@ -25,7 +42,88 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+function parseApiError(res: Response, bodyText: string): Error {
+  try {
+    const err = JSON.parse(bodyText) as { detail?: unknown };
+    const d = err.detail;
+    const msg =
+      typeof d === 'string'
+        ? d
+        : Array.isArray(d)
+          ? d.map((x: { msg?: string }) => x?.msg).filter(Boolean).join('; ') || bodyText
+          : d != null
+            ? JSON.stringify(d)
+            : res.statusText;
+    return new Error(msg || 'Ошибка запроса');
+  } catch {
+    return new Error(bodyText || res.statusText || 'Ошибка запроса');
+  }
+}
+
 export const api = {
+  auth: {
+    login: async (data: UserLogin) => {
+      /** Без Authorization: после выхода старый токен не должен уходить на /auth/login (иначе возможны зависания прокси). */
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
+      try {
+        const res = await fetch(`${API_BASE}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+          signal: controller.signal,
+        });
+        const raw = await res.text();
+        if (!res.ok) {
+          throw parseApiError(res, raw);
+        }
+        const result = JSON.parse(raw) as AuthToken;
+        setAuthToken(result.token);
+        return result;
+      } catch (e) {
+        if (e instanceof Error && e.name === 'AbortError') {
+          throw new Error('Превышено время ожидания входа');
+        }
+        throw e;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    },
+    me: () => fetchApi<User>('/auth/me'),
+    logout: async () => {
+      const token = getAuthToken();
+      try {
+        if (token) {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 8000);
+          try {
+            const res = await fetch(`${API_BASE}/auth/logout`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${token}` },
+              signal: controller.signal,
+            });
+            if (!res.ok) {
+              const t = await res.text().catch(() => '');
+              throw new Error(t || res.statusText);
+            }
+          } finally {
+            clearTimeout(timeoutId);
+          }
+        }
+      } finally {
+        clearAuthToken();
+      }
+    },
+  },
+  admin: {
+    users: {
+      list: () => fetchApi<User[]>('/admin/users'),
+      create: (data: UserCreate) => fetchApi<User>('/admin/users', { method: 'POST', body: JSON.stringify(data) }),
+      update: (id: number, data: Partial<UserCreate>) => fetchApi<User>(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+      delete: (id: number) => fetchApi<void>(`/admin/users/${id}`, { method: 'DELETE' }),
+    },
+    auditLogs: (limit = 200) => fetchApi<AuditLog[]>(`/admin/audit-logs?${new URLSearchParams({ limit: String(limit) })}`),
+  },
   devices: {
     list: () => fetchApi<Device[]>('/devices'),
     get: (id: number) => fetchApi<Device>(`/devices/${id}`),
@@ -103,7 +201,12 @@ export const api = {
     upload: async (id: number, file: File) => {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch(`${API_BASE}/invoices/${id}/upload`, { method: 'POST', body: fd });
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}/invoices/${id}/upload`, {
+        method: 'POST',
+        body: fd,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       if (!res.ok) throw new Error(await res.text());
       return res.json();
     },
@@ -136,6 +239,43 @@ export const api = {
     },
   },
 };
+
+export interface User {
+  id: number;
+  username: string;
+  full_name: string | null;
+  role: 'admin' | 'employee';
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+export interface UserLogin {
+  username: string;
+  password: string;
+}
+export interface UserCreate {
+  username: string;
+  password: string;
+  full_name?: string | null;
+  role: 'admin' | 'employee';
+  is_active: boolean;
+}
+export interface AuthToken {
+  token: string;
+  user: User;
+}
+export interface AuditLog {
+  id: number;
+  user_id: number | null;
+  username: string | null;
+  role: string | null;
+  action: string;
+  method: string;
+  path: string;
+  status_code: number | null;
+  details: string | null;
+  created_at: string;
+}
 
 export interface StatsDataset {
   label: string;
@@ -263,13 +403,13 @@ export interface BomItem {
   id: number;
   bom_version_id: number;
   part_id: number;
-  qty_per_device: string;
+  qty_per_device: number;
   scrap_rate: string | null;
   note: string | null;
 }
 export interface BomItemCreate {
   part_id: number;
-  qty_per_device: string;
+  qty_per_device: number;
   scrap_rate?: string | null;
   note?: string | null;
 }

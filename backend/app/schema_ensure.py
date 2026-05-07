@@ -32,6 +32,7 @@ _PG_STATEMENTS = [
     "ALTER TABLE invoice_part_links DROP COLUMN IF EXISTS amount_allocated",
     "ALTER TABLE parts DROP COLUMN IF EXISTS uom",
     "ALTER TABLE monthly_plan_parts ADD COLUMN IF NOT EXISTS qty_delivered NUMERIC(18,6) NOT NULL DEFAULT 0",
+    "ALTER TABLE device_bom_items ALTER COLUMN qty_per_device TYPE INTEGER USING ROUND(qty_per_device)::integer",
 ]
 
 

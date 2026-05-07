@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def decimal_to_str(v: Any) -> str:
@@ -13,6 +13,55 @@ def decimal_to_str(v: Any) -> str:
 
 class BaseSchema(BaseModel):
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: decimal_to_str})
+
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+
+class UserCreate(BaseModel):
+    username: str
+    password: str
+    full_name: str | None = None
+    role: str = "employee"
+    is_active: bool = True
+
+
+class UserUpdate(BaseModel):
+    username: str | None = None
+    password: str | None = None
+    full_name: str | None = None
+    role: str | None = None
+    is_active: bool | None = None
+
+
+class UserRead(BaseSchema):
+    id: int
+    username: str
+    full_name: str | None
+    role: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class AuthToken(BaseModel):
+    token: str
+    user: UserRead
+
+
+class AuditLogRead(BaseSchema):
+    id: int
+    user_id: int | None
+    username: str | None
+    role: str | None
+    action: str
+    method: str
+    path: str
+    status_code: int | None
+    details: str | None
+    created_at: datetime
 
 
 class DeviceBase(BaseModel):
@@ -192,13 +241,13 @@ class BomVersionRead(BaseModel):
 
 class BomItemCreate(BaseModel):
     part_id: int
-    qty_per_device: Decimal
+    qty_per_device: int = Field(ge=1)
     scrap_rate: Decimal | None = None
     note: str | None = None
 
 
 class BomItemUpdate(BaseModel):
-    qty_per_device: Decimal | None = None
+    qty_per_device: int | None = Field(None, ge=1)
     scrap_rate: Decimal | None = None
     note: str | None = None
 
@@ -207,7 +256,7 @@ class BomItemRead(BaseModel):
     id: int
     bom_version_id: int
     part_id: int
-    qty_per_device: Decimal
+    qty_per_device: int
     scrap_rate: Decimal | None
     note: str | None
 

@@ -31,7 +31,7 @@ async def clear_database(session: AsyncSession) -> None:
         "monthly_plan_parts, monthly_plan_devices, monthly_plans, "
         "order_part_items, order_items, orders, "
         "device_bom_items, device_bom_versions, device_aliases, "
-        "invoices, files, devices, parts RESTART IDENTITY CASCADE"
+        "invoices, files, audit_logs, users, devices, parts RESTART IDENTITY CASCADE"
     ))
     await session.flush()
 
@@ -84,17 +84,17 @@ async def generate_test_data(session: AsyncSession) -> None:
 
     # BOM items
     session.add_all([
-        DeviceBomItem(bom_version_id=bom1.id, part_id=p1.id, qty_per_device=Decimal("1"), scrap_rate=Decimal("0.02")),
-        DeviceBomItem(bom_version_id=bom1.id, part_id=p2.id, qty_per_device=Decimal("1"), scrap_rate=Decimal("0.01")),
-        DeviceBomItem(bom_version_id=bom1.id, part_id=p3.id, qty_per_device=Decimal("5"), scrap_rate=Decimal("0.05")),
-        DeviceBomItem(bom_version_id=bom1.id, part_id=p5.id, qty_per_device=Decimal("1"), scrap_rate=Decimal("0")),
-        DeviceBomItem(bom_version_id=bom2.id, part_id=p1.id, qty_per_device=Decimal("1"), scrap_rate=Decimal("0.02")),
-        DeviceBomItem(bom_version_id=bom2.id, part_id=p2.id, qty_per_device=Decimal("1"), scrap_rate=Decimal("0.01")),
-        DeviceBomItem(bom_version_id=bom2.id, part_id=p6.id, qty_per_device=Decimal("2"), scrap_rate=Decimal("0.03")),
-        DeviceBomItem(bom_version_id=bom3.id, part_id=p1.id, qty_per_device=Decimal("1"), scrap_rate=Decimal("0.02")),
-        DeviceBomItem(bom_version_id=bom3.id, part_id=p2.id, qty_per_device=Decimal("1"), scrap_rate=Decimal("0.01")),
-        DeviceBomItem(bom_version_id=bom3.id, part_id=p7.id, qty_per_device=Decimal("1"), scrap_rate=Decimal("0")),
-        DeviceBomItem(bom_version_id=bom3.id, part_id=p4.id, qty_per_device=Decimal("4"), scrap_rate=Decimal("0.05")),
+        DeviceBomItem(bom_version_id=bom1.id, part_id=p1.id, qty_per_device=1, scrap_rate=Decimal("0.02")),
+        DeviceBomItem(bom_version_id=bom1.id, part_id=p2.id, qty_per_device=1, scrap_rate=Decimal("0.01")),
+        DeviceBomItem(bom_version_id=bom1.id, part_id=p3.id, qty_per_device=5, scrap_rate=Decimal("0.05")),
+        DeviceBomItem(bom_version_id=bom1.id, part_id=p5.id, qty_per_device=1, scrap_rate=Decimal("0")),
+        DeviceBomItem(bom_version_id=bom2.id, part_id=p1.id, qty_per_device=1, scrap_rate=Decimal("0.02")),
+        DeviceBomItem(bom_version_id=bom2.id, part_id=p2.id, qty_per_device=1, scrap_rate=Decimal("0.01")),
+        DeviceBomItem(bom_version_id=bom2.id, part_id=p6.id, qty_per_device=2, scrap_rate=Decimal("0.03")),
+        DeviceBomItem(bom_version_id=bom3.id, part_id=p1.id, qty_per_device=1, scrap_rate=Decimal("0.02")),
+        DeviceBomItem(bom_version_id=bom3.id, part_id=p2.id, qty_per_device=1, scrap_rate=Decimal("0.01")),
+        DeviceBomItem(bom_version_id=bom3.id, part_id=p7.id, qty_per_device=1, scrap_rate=Decimal("0")),
+        DeviceBomItem(bom_version_id=bom3.id, part_id=p4.id, qty_per_device=4, scrap_rate=Decimal("0.05")),
     ])
 
     # Orders — январь / февраль / март: разные даты, приборы и прямые детали (для графиков и тестов)

@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -31,7 +31,7 @@ class DeviceBomItem(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     bom_version_id: Mapped[int] = mapped_column(ForeignKey("device_bom_versions.id", ondelete="CASCADE"), nullable=False)
     part_id: Mapped[int] = mapped_column(ForeignKey("parts.id", ondelete="CASCADE"), nullable=False)
-    qty_per_device: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    qty_per_device: Mapped[int] = mapped_column(Integer, nullable=False)
     scrap_rate: Mapped[Decimal | None] = mapped_column(Numeric(10, 6), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 

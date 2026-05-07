@@ -25,6 +25,7 @@
   let linkPlanId: number | null = null;
   let linkPartIds: number[] = [];
   let linkInvoiceId = 0;
+  let linkInvoiceSearchQuery = '';
   let linkQtyByPart: Record<number, string> = {};
 
   let createInvoiceModalOpen = false;
@@ -253,20 +254,64 @@
     };
   }
 
+  function sortInvoicesNewestFirst(list: Invoice[]): Invoice[] {
+    return [...list].sort((a, b) => {
+      const dd = String(b.invoice_date).localeCompare(String(a.invoice_date));
+      if (dd !== 0) return dd;
+      const cd = String(b.created_at).localeCompare(String(a.created_at));
+      if (cd !== 0) return cd;
+      return b.id - a.id;
+    });
+  }
+
+  function invoiceLinkSearchHaystack(inv: Invoice): string {
+    return [inv.invoice_no, inv.supplier ?? '', inv.description ?? '', inv.invoice_date, String(inv.id)].join(' ').toLowerCase();
+  }
+
+  function invoicesFilteredForLink(query: string, sorted: Invoice[]): Invoice[] {
+    const q = query.trim().toLowerCase();
+    if (!q) return sorted;
+    return sorted.filter((inv) => invoiceLinkSearchHaystack(inv).includes(q));
+  }
+
+  $: invoicesSortedNewest = sortInvoicesNewestFirst(invoices);
+  $: invoicesLinkPickerList = invoicesFilteredForLink(linkInvoiceSearchQuery, invoicesSortedNewest);
+
+  function invoicePickSubtitle(inv: Invoice): string {
+    const pay = inv.payment_date ? 'оплачен' : 'без оплаты';
+    return `${formatDate(inv.invoice_date)}${inv.supplier ? ` · ${inv.supplier}` : ''} · ${pay}`;
+  }
+
+  function selectedLinkInvoiceLabel(): string {
+    const inv = invoices.find((x) => x.id === linkInvoiceId);
+    if (!inv) return 'Счёт не выбран';
+    return `№${inv.invoice_no} · ${invoicePickSubtitle(inv)}`;
+  }
+
+  function selectInvoiceForLink(inv: Invoice) {
+    linkInvoiceId = inv.id;
+  }
+
   function openLinkModal(planId: number, partIds: number[]) {
     if (invoices.length === 0) {
       alert('Сначала создайте счёт в разделе Счета');
       return;
     }
+    const newest = sortInvoicesNewestFirst(invoices);
     linkPlanId = planId;
     linkPartIds = partIds;
-    linkInvoiceId = invoices[0].id;
+    linkInvoiceSearchQuery = '';
+    linkInvoiceId = newest[0]?.id ?? 0;
     linkQtyByPart = initialQtyByPart(planId, partIds);
     linkModalOpen = true;
   }
 
   async function saveLinks() {
-    if (!linkPlanId || !linkInvoiceId) return;
+    if (!linkPlanId) return;
+    if (!linkInvoiceId) {
+      alert('Выберите счёт из списка');
+      return;
+    }
     try {
       for (const partId of linkPartIds) {
         await api.invoices.parts.create(linkInvoiceId, {
@@ -626,16 +671,40 @@
 
 {#if linkModalOpen && linkPlanId}
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" on:click={() => linkModalOpen = false} role="button" tabindex="0">
-    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
+    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-lg border border-zinc-700" on:click|stopPropagation role="dialog">
       <h2 class="text-lg font-semibold text-white mb-4">Привязать счёт к {linkPartIds.length} деталям</h2>
       <form on:submit|preventDefault={saveLinks} class="space-y-4">
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Счёт</label>
-          <select bind:value={linkInvoiceId} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required>
-            {#each invoices as i}
-              <option value={i.id}>№{i.invoice_no}{i.supplier ? ` · ${i.supplier}` : ''}</option>
-            {/each}
-          </select>
+          <input
+            type="search"
+            bind:value={linkInvoiceSearchQuery}
+            placeholder="Номер счёта, поставщик, дата или id"
+            class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
+          />
+          <div class="mt-2 rounded-lg border border-zinc-700 bg-zinc-950/70">
+            <div class="border-b border-zinc-800 px-3 py-2 text-xs text-zinc-400">
+              Выбрано: <span class="text-zinc-100">{selectedLinkInvoiceLabel()}</span>
+            </div>
+            <div class="max-h-64 overflow-y-auto p-1">
+              {#if invoicesLinkPickerList.length === 0}
+                <div class="px-3 py-2 text-sm text-zinc-500">Счета не найдены</div>
+              {:else}
+                {#each invoicesLinkPickerList as inv}
+                  <button
+                    type="button"
+                    on:click={() => selectInvoiceForLink(inv)}
+                    class="block w-full rounded-md px-3 py-2 text-left text-sm {linkInvoiceId === inv.id
+                      ? 'bg-amber-500/20 text-amber-200'
+                      : 'text-zinc-200 hover:bg-zinc-800'}"
+                  >
+                    <div class="font-mono">№{inv.invoice_no}</div>
+                    <div class="text-xs text-zinc-500">{invoicePickSubtitle(inv)}</div>
+                  </button>
+                {/each}
+              {/if}
+            </div>
+          </div>
         </div>
         <div class="space-y-2">
           <label class="block text-sm text-zinc-400">Покрываемый объем</label>

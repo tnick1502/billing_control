@@ -5,8 +5,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
+from app.auth import auth_middleware, ensure_default_users
 from app.config import settings
-from app.api import bom, devices, files, invoices, monthly_plans, orders, parts, stats
+from app.api import auth, bom, devices, files, invoices, monthly_plans, orders, parts, stats
 from app.database import Base, async_session_maker, engine
 from app.schema_ensure import ensure_schema
 from app.seeds.init_data import seed_database
@@ -62,6 +63,8 @@ async def lifespan(app: FastAPI):
                 await session.rollback()
                 print(f"Seed warning: {e}")
 
+    await ensure_default_users()
+
     yield
 
     await engine.dispose()
@@ -82,6 +85,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.middleware("http")(auth_middleware)
+
 
 @app.exception_handler(IntegrityError)
 async def integrity_error_handler(request: Request, exc: IntegrityError):
@@ -95,6 +100,7 @@ async def integrity_error_handler(request: Request, exc: IntegrityError):
 
 
 app.include_router(devices.router)
+app.include_router(auth.router)
 app.include_router(parts.router)
 app.include_router(orders.router)
 app.include_router(bom.router)

@@ -432,15 +432,7 @@
                 </button>
               </div>
 
-              {#if day.invoices.length === 0}
-                <button
-                  type="button"
-                  on:click={() => openCreate(day.date)}
-                  class="w-full rounded border border-dashed border-zinc-700 bg-zinc-900/40 px-2 py-2 text-center text-[11px] text-zinc-500 hover:border-amber-400 hover:text-amber-200"
-                >
-                  добавить
-                </button>
-              {:else}
+              {#if day.invoices.length > 0}
                 <div class="space-y-1 overflow-hidden">
                   {#each day.invoices.slice(0, 3) as invoice}
                     <button

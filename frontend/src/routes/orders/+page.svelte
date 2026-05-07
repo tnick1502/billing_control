@@ -476,11 +476,7 @@
                 </button>
               </div>
 
-              {#if day.orders.length === 0}
-                <div class="rounded border border-dashed border-zinc-800 bg-zinc-900/30 px-2 py-2 text-center text-[11px] text-zinc-600">
-                  нет заказов
-                </div>
-              {:else}
+              {#if day.orders.length > 0}
                 <div class="space-y-1 overflow-hidden">
                   {#each day.orders.slice(0, 3) as order}
                     <button
