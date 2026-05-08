@@ -23,6 +23,10 @@ def _cors_allow_origins() -> list[str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    print(
+        f"[billing_control] DB TLS: ssl={settings.database_ssl} verify={settings.database_ssl_verify}",
+        flush=True,
+    )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

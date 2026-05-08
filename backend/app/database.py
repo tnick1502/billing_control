@@ -11,7 +11,7 @@ def _db_connect_args() -> dict:
         return {}
     if settings.database_ssl_verify:
         return {"ssl": True}
-    ctx = ssl.create_default_context()
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     return {"ssl": ctx}
