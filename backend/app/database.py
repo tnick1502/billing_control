@@ -1,15 +1,25 @@
+import ssl
+
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
 
-_connect_args = {}
-if settings.database_ssl:
-    _connect_args["ssl"] = True
+
+def _db_connect_args() -> dict:
+    if not settings.database_ssl:
+        return {}
+    if settings.database_ssl_verify:
+        return {"ssl": True}
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return {"ssl": ctx}
+
 
 engine = create_async_engine(
     settings.database_url,
-    connect_args=_connect_args,
+    connect_args=_db_connect_args(),
     echo=False,
     pool_pre_ping=True,
     pool_recycle=3600,

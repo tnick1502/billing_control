@@ -62,6 +62,7 @@ Compose подхватывает файл **`.env`** в корне репози�
 - **`PUBLIC_ORIGIN`** — публичный URL frontend без слэша в конце, например `http://203.0.113.10` или `https://example.com`.
 - **`DATABASE_URL`** — PostgreSQL URL для backend (в проекте используется драйвер **asyncpg**: `postgresql+asyncpg://...`).
 - **`DATABASE_SSL`** — `true`, если облачный PostgreSQL требует TLS (иначе `false` или не задавайте).
+- **`DATABASE_SSL_VERIFY`** — `false`, если при `DATABASE_SSL=true` возникает `SSLCertVerificationError` (self-signed у провайдера); соединение остаётся по TLS, но без проверки цепочки сертификатов.
 - **`S3_ENDPOINT_URL`** — S3 endpoint, доступный backend.
 - **`S3_PUBLIC_ENDPOINT_URL`** — S3 endpoint, доступный браузеру для presigned-ссылок.
 - **`S3_ACCESS_KEY`** / **`S3_SECRET_KEY`** / **`S3_BUCKET`** / **`S3_REGION`** — параметры S3.

@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/mrp_bom_orders"
     database_ssl: bool = False  # env DATABASE_SSL=true — TLS к PostgreSQL (asyncpg)
+    database_ssl_verify: bool = True  # false — без проверки CA (self-signed от провайдера), только с DATABASE_SSL=true
 
     # S3 / MinIO (endpoint — для сервера: в Docker часто http://minio:9000)
     s3_endpoint_url: str = "http://localhost:9000"
