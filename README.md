@@ -55,10 +55,13 @@ MinIO в dev: логин и пароль — `MINIO_ROOT_USER` и `MINIO_ROOT_PA
 
 Compose подхватывает файл **`.env`** в корне репозитория. Шаблон — **`.env.example`**.
 
+Синтаксис `.env` для Docker Compose: только строки **`ИМЯ=значение`** и комментарии, где **первый символ строки — `#`**. Строка вроде заголовка без `#` и без `=` приведёт к ошибке `unexpected character in variable name`.
+
 На сервере или при доступе не с `localhost` задайте, как минимум:
 
 - **`PUBLIC_ORIGIN`** — публичный URL frontend без слэша в конце, например `http://203.0.113.10` или `https://example.com`.
-- **`DATABASE_URL`** — PostgreSQL URL для backend.
+- **`DATABASE_URL`** — PostgreSQL URL для backend (в проекте используется драйвер **asyncpg**: `postgresql+asyncpg://...`).
+- **`DATABASE_SSL`** — `true`, если облачный PostgreSQL требует TLS (иначе `false` или не задавайте).
 - **`S3_ENDPOINT_URL`** — S3 endpoint, доступный backend.
 - **`S3_PUBLIC_ENDPOINT_URL`** — S3 endpoint, доступный браузеру для presigned-ссылок.
 - **`S3_ACCESS_KEY`** / **`S3_SECRET_KEY`** / **`S3_BUCKET`** / **`S3_REGION`** — параметры S3.

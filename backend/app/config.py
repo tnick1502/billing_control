@@ -1,3 +1,5 @@
+from pydantic import field_validator
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -6,6 +8,7 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/mrp_bom_orders"
+    database_ssl: bool = False  # env DATABASE_SSL=true — TLS к PostgreSQL (asyncpg)
 
     # S3 / MinIO (endpoint — для сервера: в Docker часто http://minio:9000)
     s3_endpoint_url: str = "http://localhost:9000"
@@ -21,6 +24,37 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://localhost:3000,http://localhost"
     seed_on_startup: bool = True
     force_reseed: bool = False
+
+    @field_validator("database_url")
+    @classmethod
+    def database_url_nonempty(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError(
+                "DATABASE_URL пустой. В .env для Docker Compose разрешены только строки вида KEY=value "
+                "и комментарии, начинающиеся с # в первом символе строки."
+            )
+        return s
+
+    @field_validator("s3_endpoint_url", "s3_access_key", "s3_secret_key", "s3_bucket")
+    @classmethod
+    def s3_core_nonempty(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError(
+                "Пустая переменная S3 (endpoint, ключ или бакет). Проверьте .env: compose не подставляет "
+                "значения, если файл с ошибкой синтаксиса или переменная не задана."
+            )
+        return s
+
+    @field_validator("s3_public_endpoint_url", mode="before")
+    @classmethod
+    def s3_public_empty_to_none(cls, v: object):
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
 
 
 settings = Settings()

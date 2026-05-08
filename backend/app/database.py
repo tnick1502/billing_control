@@ -3,8 +3,13 @@ from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
 
+_connect_args = {}
+if settings.database_ssl:
+    _connect_args["ssl"] = True
+
 engine = create_async_engine(
     settings.database_url,
+    connect_args=_connect_args,
     echo=False,
     pool_pre_ping=True,
     pool_recycle=3600,
