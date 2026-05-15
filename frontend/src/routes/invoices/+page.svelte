@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import { formatIntegerQty, formatDate, formatAmount } from '$lib/format';
+  import { formatIntegerQty, formatDate, formatDateTime, formatAmount, formatFileSize } from '$lib/format';
   import type { Invoice, InvoiceCreate, InvoicePartLink, InvoicePartLinkCreate, InvoiceFileInfo } from '$lib/api';
 
   type CalendarDay = {
@@ -45,6 +45,7 @@
   let invoiceSaveOk = true;
 
   const PAGE_SIZE = 50;
+  const MAX_FILE_SIZE = 100 * 1024 * 1024;
   const weekDays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
   $: calendarDays = buildCalendarDays(calendarMonth, invoices);
@@ -207,13 +208,21 @@
     selectedDayDate = date;
   }
 
+  /** Пустая строка → null; сумма 0 сохраняется (|| null для суммы не подходит). */
+  function optionalAmountForApi(val: string | number | null | undefined): string | null {
+    if (val === null || val === undefined) return null;
+    const s = typeof val === 'number' ? String(val) : String(val).trim();
+    return s === '' ? null : s;
+  }
+
   function invoicePayload(): InvoiceCreate {
     return {
       ...form,
       supplier: form.supplier || null,
       payment_date: form.payment_date || null,
-      total_amount: form.total_amount || null,
+      total_amount: optionalAmountForApi(form.total_amount),
       description: form.description || null,
+      note: form.note != null && String(form.note).trim() !== '' ? form.note : null,
     };
   }
 
@@ -228,8 +237,12 @@
           invoiceSaveMessage = 'При создании счёта обязательно приложите файл';
           return;
         }
-        current = await api.invoices.create(invoicePayload());
-        await api.invoices.upload(current.id, createFileInput.files[0]);
+        if (createFileInput.files[0].size > MAX_FILE_SIZE) {
+          invoiceSaveOk = false;
+          invoiceSaveMessage = 'Файл слишком большой. Максимальный размер — 100 МБ.';
+          return;
+        }
+        current = await api.invoices.create(invoicePayload(), createFileInput.files[0]);
       }
       await load();
       await openInvoice(current, { preserveMessage: true });
@@ -326,6 +339,10 @@
 
   async function uploadFile() {
     if (!selectedInvoice || !partFileInput?.files?.length) return;
+    if (partFileInput.files[0].size > MAX_FILE_SIZE) {
+      alert('Файл слишком большой. Максимальный размер — 100 МБ.');
+      return;
+    }
     try {
       await api.invoices.upload(selectedInvoice.id, partFileInput.files[0]);
       partFileInput.value = '';
@@ -335,10 +352,17 @@
     }
   }
 
-  async function downloadFile(fileId: number) {
+  async function downloadFile(fileId: number, suggestedFilename?: string) {
     try {
-      const { url } = await api.files.presignedUrl(fileId);
-      window.open(url, '_blank');
+      const blob = await api.files.downloadBlob(fileId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = suggestedFilename?.trim() || `file-${fileId}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
     } catch (e) {
       alert((e as Error).message);
     }
@@ -698,20 +722,61 @@
             Сначала создайте счёт, затем в этом же окне появятся файлы и привязки к деталям.
           </div>
         {:else}
-          <div class="mb-4">
-            <h4 class="text-sm text-zinc-400 mb-2">Файлы счёта</h4>
-            <div class="flex flex-wrap gap-2 items-center">
-              {#each invoiceFiles as f}
-                <button on:click={() => downloadFile(f.id)} class="px-3 py-1.5 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600 text-sm">
-                  Скачать
+          <div class="space-y-6">
+            <div class="rounded-xl border border-zinc-700 bg-zinc-950/60 p-4 shadow-inner shadow-black/20">
+              <h4 class="text-sm font-semibold tracking-wide text-zinc-200 mb-1">Файлы счёта</h4>
+              <p class="text-xs text-zinc-500 mb-4">Имя файла и дата загрузки</p>
+              {#if invoiceFiles.length === 0}
+                <p class="text-sm text-zinc-500">Вложений пока нет.</p>
+              {:else}
+                <ul class="space-y-2">
+                  {#each invoiceFiles as f}
+                    <li
+                      class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-700/90 bg-zinc-900/70 px-3 py-2.5"
+                    >
+                      <div class="min-w-0 flex-1">
+                        <div class="truncate text-sm font-medium text-zinc-100" title={f.filename}>{f.filename}</div>
+                        <div class="mt-0.5 text-xs text-zinc-500">
+                          Загружен: {formatDateTime(f.uploaded_at)}
+                          {#if f.size_bytes != null}
+                            <span class="text-zinc-600"> · {formatFileSize(f.size_bytes)}</span>
+                          {/if}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        on:click={() => downloadFile(f.id, f.filename)}
+                        class="shrink-0 px-3 py-1.5 rounded-lg bg-zinc-700 text-white text-sm hover:bg-zinc-600"
+                      >
+                        Скачать
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </div>
+
+            <div class="rounded-xl border border-dashed border-zinc-600 bg-zinc-950/25 p-4">
+              <h4 class="text-sm font-semibold text-zinc-200 mb-1">Добавить файл</h4>
+              <p class="text-xs text-zinc-500 mb-3">Отдельно от списка вложений</p>
+              <div class="flex flex-wrap items-center gap-2">
+                <input
+                  type="file"
+                  bind:this={partFileInput}
+                  class="min-w-0 flex-1 text-sm text-zinc-300 file:mr-2 file:rounded-md file:border-0 file:bg-zinc-700 file:px-3 file:py-1.5 file:text-sm file:text-white hover:file:bg-zinc-600"
+                />
+                <button
+                  type="button"
+                  on:click={uploadFile}
+                  class="shrink-0 px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 text-sm"
+                >
+                  Загрузить
                 </button>
-              {/each}
-              <input type="file" bind:this={partFileInput} class="text-sm text-zinc-400" />
-              <button on:click={uploadFile} class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 text-sm">Загрузить</button>
+              </div>
             </div>
           </div>
 
-          <h4 class="text-sm text-zinc-400 mb-2">Привязки к деталям</h4>
+          <h4 class="text-sm text-zinc-400 mb-2 mt-6">Привязки к деталям</h4>
           <table class="w-full">
             <thead class="text-zinc-400 text-left text-sm">
               <tr>

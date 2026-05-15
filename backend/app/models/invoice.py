@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, LargeBinary, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -26,18 +26,34 @@ class Invoice(Base):
 
 
 class File(Base):
+    """Метаданные файла; байты хранятся в FileContent."""
+
     __tablename__ = "files"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    storage: Mapped[str] = mapped_column(String(16), nullable=False, default="s3")
-    bucket: Mapped[str] = mapped_column(String(128), nullable=False)
-    object_key: Mapped[str] = mapped_column(String(1024), nullable=False)
-    etag: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    filename: Mapped[str] = mapped_column(String(512), nullable=False)
     content_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
     size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
-    __table_args__ = (UniqueConstraint("bucket", "object_key", name="uq_files_bucket_key"),)
+    content: Mapped["FileContent | None"] = relationship(
+        "FileContent",
+        back_populates="file",
+        cascade="all, delete-orphan",
+        single_parent=True,
+        uselist=False,
+    )
+
+
+class FileContent(Base):
+    """Бинарное содержимое файла отдельно от метаданных в files."""
+
+    __tablename__ = "file_contents"
+
+    file_id: Mapped[int] = mapped_column(ForeignKey("files.id", ondelete="CASCADE"), primary_key=True, nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+
+    file: Mapped["File"] = relationship("File", back_populates="content")
 
 
 class InvoiceFile(Base):

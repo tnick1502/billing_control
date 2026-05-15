@@ -13,13 +13,25 @@ export const handle: Handle = async ({ event, resolve }) => {
   const headers = new Headers(event.request.headers);
   headers.delete('host');
   headers.delete('content-length');
-  const body = ['GET', 'HEAD'].includes(event.request.method) ? undefined : event.request.body;
+
+  const method = event.request.method;
+  if (method === 'GET' || method === 'HEAD') {
+    return fetch(target, {
+      method,
+      headers,
+      redirect: 'manual',
+    });
+  }
+
+  // Проксирование multipart через undici + ReadableStream + duplex часто даёт TypeError: fetch failed.
+  // Буферизуем тело — для загрузки вложений к счетам размер приемлемый.
+  const raw = await event.request.arrayBuffer();
+  const body = raw.byteLength > 0 ? raw : undefined;
 
   return fetch(target, {
-    method: event.request.method,
+    method,
     headers,
     body,
-    ...(body ? { duplex: 'half' } : {}),
     redirect: 'manual',
-  } as RequestInit & { duplex: 'half' });
+  });
 };

@@ -1,14 +1,13 @@
+from datetime import date
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.database import get_db
 from app.models import Invoice, File as FileModel, InvoiceFile, InvoicePartLink
 from app.schemas.common import (
-    InvoiceCreate,
     InvoiceRead,
     InvoiceUpdate,
     InvoicePartLinkCreate,
@@ -16,7 +15,7 @@ from app.schemas.common import (
     InvoicePartLinkUpdate,
     FileRead,
 )
-from app.services.s3_service import upload_file, ensure_bucket_exists, get_presigned_url
+from app.services.file_storage import delete_orphaned_files, save_upload_as_file
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 
@@ -43,13 +42,71 @@ def _clean_invoice_payload(d: dict) -> dict:
     return {k: v for k, v in out.items() if v is not None}
 
 
+def _parse_invoice_form_dates(
+    invoice_no: str,
+    invoice_date: str,
+    supplier: str | None,
+    total_amount: str | None,
+    payment_date: str | None,
+    description: str | None,
+    note: str | None,
+) -> dict:
+    try:
+        idate = date.fromisoformat(invoice_date.strip())
+    except ValueError:
+        raise HTTPException(400, "Некорректная дата счёта") from None
+    pdate: date | None = None
+    if payment_date and str(payment_date).strip():
+        try:
+            pdate = date.fromisoformat(str(payment_date).strip())
+        except ValueError:
+            raise HTTPException(400, "Некорректная дата оплаты") from None
+    raw = {
+        "invoice_no": invoice_no,
+        "invoice_date": idate,
+        "supplier": supplier,
+        "total_amount": total_amount,
+        "payment_date": pdate,
+        "description": description,
+        "note": note,
+    }
+    return _clean_invoice_payload(raw)
+
+
 @router.post("", response_model=InvoiceRead)
-async def create_invoice(data: InvoiceCreate, session: AsyncSession = Depends(get_db)):
-    dump = _clean_invoice_payload(data.model_dump())
+async def create_invoice(
+    invoice_no: str = Form(...),
+    invoice_date: str = Form(...),
+    supplier: str | None = Form(None),
+    total_amount: str | None = Form(None),
+    payment_date: str | None = Form(None),
+    description: str | None = Form(None),
+    note: str | None = Form(None),
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_db),
+):
+    dump = _parse_invoice_form_dates(
+        invoice_no=invoice_no,
+        invoice_date=invoice_date,
+        supplier=supplier,
+        total_amount=total_amount,
+        payment_date=payment_date,
+        description=description,
+        note=note,
+    )
     if not dump.get("invoice_no"):
         raise HTTPException(400, "Номер счета обязателен")
+
     invoice = Invoice(**dump)
     session.add(invoice)
+    await session.flush()
+
+    try:
+        db_file = await save_upload_as_file(session, file)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+    session.add(InvoiceFile(invoice_id=invoice.id, file_id=db_file.id, role="original"))
     await session.flush()
     await session.refresh(invoice)
     return invoice
@@ -96,7 +153,11 @@ async def delete_invoice(invoice_id: int, session: AsyncSession = Depends(get_db
     invoice = result.scalar_one_or_none()
     if not invoice:
         raise HTTPException(404, "Invoice not found")
+    linked = await session.execute(select(InvoiceFile.file_id).where(InvoiceFile.invoice_id == invoice_id))
+    file_ids = list(linked.scalars().all())
     await session.delete(invoice)
+    await session.flush()
+    await delete_orphaned_files(session, file_ids)
     return None
 
 
@@ -121,26 +182,12 @@ async def upload_invoice_file(
     if not invoice:
         raise HTTPException(404, "Invoice not found")
 
-    await ensure_bucket_exists()
-    object_key, etag, size = await upload_file(
-        file.file,
-        file.filename or "document",
-        file.content_type,
-    )
+    try:
+        db_file = await save_upload_as_file(session, file)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
 
-    db_file = FileModel(
-        storage="s3",
-        bucket=settings.s3_bucket,
-        object_key=object_key,
-        etag=etag,
-        content_type=file.content_type,
-        size_bytes=size,
-    )
-    session.add(db_file)
-    await session.flush()
-
-    inv_file = InvoiceFile(invoice_id=invoice_id, file_id=db_file.id, role="original")
-    session.add(inv_file)
+    session.add(InvoiceFile(invoice_id=invoice_id, file_id=db_file.id, role="original"))
     await session.flush()
     await session.refresh(db_file)
     return db_file
@@ -204,13 +251,3 @@ async def delete_invoice_part_link(invoice_id: int, link_id: int, session: Async
         raise HTTPException(404, "Invoice part link not found")
     await session.delete(link)
     return None
-
-
-@router.get("/files/{file_id}/presigned-url")
-async def get_file_presigned_url(file_id: int, session: AsyncSession = Depends(get_db)):
-    result = await session.execute(select(FileModel).where(FileModel.id == file_id))
-    f = result.scalar_one_or_none()
-    if not f:
-        raise HTTPException(404, "File not found")
-    url = get_presigned_url(f.bucket, f.object_key)
-    return {"url": url}

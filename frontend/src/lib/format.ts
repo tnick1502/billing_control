@@ -38,3 +38,20 @@ export function formatDate(val: string | null | undefined): string {
   const year = d.getFullYear();
   return `${day}.${month}.${year}`;
 }
+
+/** Дата и время (загрузка файлов и т.п.) */
+export function formatDateTime(val: string | null | undefined): string {
+  if (val == null || val === '') return '—';
+  const d = new Date(val);
+  if (isNaN(d.getTime())) return String(val);
+  return d.toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+/** Размер файла (байты) */
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} Б`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} КБ`;
+  const mb = kb / 1024;
+  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} МБ`;
+}

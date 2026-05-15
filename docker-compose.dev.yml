@@ -13,20 +13,6 @@ services:
       timeout: 5s
       retries: 5
 
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      MINIO_BROWSER_REDIRECT_URL: http://localhost:9001
-      MINIO_SERVER_URL: http://localhost:9000
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - miniodata:/data
-
   backend:
     build:
       context: ./backend
@@ -45,19 +31,12 @@ services:
       start_period: 90s
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/mrp_bom_orders
-      S3_ENDPOINT_URL: http://minio:9000
-      S3_PUBLIC_ENDPOINT_URL: http://localhost:9000
-      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
-      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
-      S3_BUCKET: invoices
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:3000,http://localhost}
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:-http://localhost}
       SEED_ON_STARTUP: "true"
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
-        condition: service_started
 
   frontend:
     build:
@@ -80,9 +59,8 @@ services:
       BACKEND_ORIGIN: http://backend:8000
       PROTOCOL_HEADER: x-forwarded-proto
       HOST_HEADER: x-forwarded-host
+      BODY_SIZE_LIMIT: 104857600
     depends_on:
       backend:
         condition: service_healthy
 
-volumes:
-  miniodata:

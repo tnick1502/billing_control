@@ -1,11 +1,10 @@
-import io
+from pathlib import Path
 from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.models import (
     Device,
     DeviceAlias,
@@ -16,12 +15,14 @@ from app.models import (
     DeviceBomVersion,
     DeviceBomItem,
     Invoice,
-    File,
     InvoiceFile,
     InvoicePartLink,
 )
+from app.services.file_storage import save_bytes_as_file
 from app.services.monthly_plan import generate_monthly_plan
-from app.services.s3_service import upload_file
+
+
+_SEED_ATTACHMENT = Path(__file__).resolve().parent / "fixtures" / "sample_invoice_attachment.txt"
 
 
 async def clear_database(session: AsyncSession) -> None:
@@ -31,7 +32,7 @@ async def clear_database(session: AsyncSession) -> None:
         "monthly_plan_parts, monthly_plan_devices, monthly_plans, "
         "order_part_items, order_items, orders, "
         "device_bom_items, device_bom_versions, device_aliases, "
-        "invoices, files, audit_logs, users, devices, parts RESTART IDENTITY CASCADE"
+        "invoices, file_contents, files, audit_logs, users, devices, parts RESTART IDENTITY CASCADE"
     ))
     await session.flush()
 
@@ -283,56 +284,16 @@ async def generate_test_data(session: AsyncSession) -> None:
 
     session.add_all(invoice_links)
 
-    inv = invoices_bulk[0]
-    inv2 = invoices_bulk[1]
-
-    # Test invoice files (demo)
-    content = (
-        f"Testovyy schet {inv.invoice_no}\n\n"
-        "Uslovnyy schet dlya demonstratsii raboty.\n"
-        f"Data: {inv.invoice_date.isoformat()}\n"
-        f"Summa: {inv.total_amount} RUB"
-    ).encode()
-    obj_key, etag, size = await upload_file(
-        io.BytesIO(content),
-        f"{inv.invoice_no}-schet.pdf",
-        "application/pdf",
-        prefix="invoices",
-    )
-    db_file = File(
-        storage="s3",
-        bucket=settings.s3_bucket,
-        object_key=obj_key,
-        etag=etag,
-        content_type="application/pdf",
-        size_bytes=size,
-    )
-    session.add(db_file)
-    await session.flush()
-    session.add(InvoiceFile(invoice_id=inv.id, file_id=db_file.id, role="original"))
-
-    content2 = (
-        f"Testovyy schet {inv2.invoice_no}\n\n"
-        "Dopolnitelnyy schet dlya demonstratsii razbitogo pokrytiya.\n"
-        f"Data: {inv2.invoice_date.isoformat()}\n"
-        f"Summa: {inv2.total_amount} RUB"
-    ).encode()
-    obj_key2, etag2, size2 = await upload_file(
-        io.BytesIO(content2),
-        f"{inv2.invoice_no}-schet.pdf",
-        "application/pdf",
-        prefix="invoices",
-    )
-    db_file2 = File(
-        storage="s3",
-        bucket=settings.s3_bucket,
-        object_key=obj_key2,
-        etag=etag2,
-        content_type="application/pdf",
-        size_bytes=size2,
-    )
-    session.add(db_file2)
-    await session.flush()
-    session.add(InvoiceFile(invoice_id=inv2.id, file_id=db_file2.id, role="original"))
+    # Вложения счетов (байты в Postgres, общий шаблон для каждого демо-счёта)
+    sample_base = _SEED_ATTACHMENT.read_bytes()
+    for inv in invoices_bulk:
+        data = sample_base + b"\n---\nInvoice: " + inv.invoice_no.encode() + b"\n"
+        db_file = await save_bytes_as_file(
+            session,
+            data=data,
+            filename=f"{inv.invoice_no}-prilozhenie.txt",
+            content_type="text/plain; charset=utf-8",
+        )
+        session.add(InvoiceFile(invoice_id=inv.id, file_id=db_file.id, role="original"))
 
     return None

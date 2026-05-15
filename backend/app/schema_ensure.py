@@ -11,6 +11,108 @@ from app.database import engine
 
 log = logging.getLogger(__name__)
 
+
+def _safe_pg_ident(name: str) -> bool:
+    return bool(name) and name.replace("_", "").isalnum()
+
+
+async def _ensure_invoice_files_composite_pk_postgresql(conn) -> None:
+    """
+    Несколько файлов на один счёт: PRIMARY KEY (invoice_id, file_id).
+
+    Старые БД: PK или UNIQUE только по invoice_id → вторая вставка (upload) даёт 500.
+    """
+    try:
+        await conn.execute(
+            text(
+                """
+                ALTER TABLE invoice_files
+                ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                """
+            )
+        )
+    except Exception as e:
+        log.warning("schema_ensure: invoice_files.created_at — %s", e)
+    result = await conn.execute(
+        text(
+            """
+            SELECT c.conname,
+                   c.contype::text AS ctype,
+                   (
+                       SELECT array_agg(a.attname ORDER BY u.ord)
+                       FROM unnest(c.conkey) WITH ORDINALITY AS u(attnum, ord)
+                       JOIN pg_attribute a
+                         ON a.attrelid = c.conrelid AND a.attnum = u.attnum AND a.attnum > 0
+                   ) AS cols
+            FROM pg_constraint c
+            JOIN pg_class r ON r.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = r.relnamespace
+            WHERE r.relname = 'invoice_files'
+              AND n.nspname = current_schema()
+              AND c.contype IN ('p', 'u')
+            """
+        )
+    )
+    rows = result.all()
+    goal = frozenset({"invoice_id", "file_id"})
+
+    def cols_set(cols) -> frozenset:
+        return frozenset(cols) if cols else frozenset()
+
+    if any(r[1] == "p" and cols_set(r[2]) == goal for r in rows):
+        return
+
+    for conname, ctype, cols in rows:
+        if cols is None:
+            continue
+        name = str(conname)
+        if not _safe_pg_ident(name):
+            log.warning("schema_ensure: invoice_files: пропуск ограничения с необычным именем %r", name)
+            continue
+        cs = cols_set(cols)
+        if ctype == "p" and cs == goal:
+            continue
+        if cs == frozenset({"invoice_id"}):
+            await conn.execute(text(f'ALTER TABLE invoice_files DROP CONSTRAINT "{name}"'))
+            log.info(
+                "schema_ensure: invoice_files — удалено ограничение %s (%s) %s",
+                name,
+                ctype,
+                list(cols),
+            )
+        elif ctype == "p" and cs != goal:
+            await conn.execute(text(f'ALTER TABLE invoice_files DROP CONSTRAINT "{name}"'))
+            log.info("schema_ensure: invoice_files — снят PK %s %s", name, list(cols))
+
+    result2 = await conn.execute(
+        text(
+            """
+            SELECT c.conname,
+                   c.contype::text AS ctype,
+                   (
+                       SELECT array_agg(a.attname ORDER BY u.ord)
+                       FROM unnest(c.conkey) WITH ORDINALITY AS u(attnum, ord)
+                       JOIN pg_attribute a
+                         ON a.attrelid = c.conrelid AND a.attnum = u.attnum AND a.attnum > 0
+                   ) AS cols
+            FROM pg_constraint c
+            JOIN pg_class r ON r.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = r.relnamespace
+            WHERE r.relname = 'invoice_files'
+              AND n.nspname = current_schema()
+              AND c.contype IN ('p', 'u')
+            """
+        )
+    )
+    rows_after = result2.all()
+    if any(r[1] == "p" and cols_set(r[2]) == goal for r in rows_after):
+        return
+    try:
+        await conn.execute(text("ALTER TABLE invoice_files ADD PRIMARY KEY (invoice_id, file_id)"))
+        log.info("schema_ensure: invoice_files — добавлен PRIMARY KEY (invoice_id, file_id)")
+    except Exception as e:
+        log.warning("schema_ensure: invoice_files ADD PRIMARY KEY — %s", e)
+
 # PostgreSQL (docker / prod)
 _PG_STATEMENTS = [
     "ALTER TABLE devices ADD COLUMN IF NOT EXISTS description TEXT",
@@ -26,6 +128,7 @@ _PG_STATEMENTS = [
     "ALTER TABLE device_bom_versions ADD COLUMN IF NOT EXISTS description TEXT",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS description TEXT",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS supplier VARCHAR(255)",
+    "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS note TEXT",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_date DATE",
     "ALTER TABLE invoices DROP COLUMN IF EXISTS currency",
     "ALTER TABLE invoices DROP COLUMN IF EXISTS status",
@@ -35,6 +138,23 @@ _PG_STATEMENTS = [
     "ALTER TABLE device_bom_items ALTER COLUMN qty_per_device TYPE INTEGER USING ROUND(qty_per_device)::integer",
 ]
 
+# Вложения: таблица байтов и приведение старых колонок files к текущей модели (если были)
+_PG_FILES_BYTEA_MIGRATION = [
+    """CREATE TABLE IF NOT EXISTS file_contents (
+        file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+        data BYTEA NOT NULL,
+        PRIMARY KEY (file_id)
+    )""",
+    "ALTER TABLE files ADD COLUMN IF NOT EXISTS filename VARCHAR(512)",
+    "UPDATE files SET filename = 'legacy.bin' WHERE filename IS NULL",
+    "ALTER TABLE files ALTER COLUMN filename SET NOT NULL",
+    "ALTER TABLE files DROP CONSTRAINT IF EXISTS uq_files_bucket_key",
+    "ALTER TABLE files DROP COLUMN IF EXISTS storage",
+    "ALTER TABLE files DROP COLUMN IF EXISTS bucket",
+    "ALTER TABLE files DROP COLUMN IF EXISTS object_key",
+    "ALTER TABLE files DROP COLUMN IF EXISTS etag",
+]
+
 
 async def ensure_schema() -> None:
     dialect = engine.dialect.name
@@ -42,10 +162,14 @@ async def ensure_schema() -> None:
         log.warning("schema_ensure: пропуск для dialect=%s", dialect)
         return
 
-    statements = _PG_STATEMENTS
+    statements = list(_PG_STATEMENTS)
+    if dialect == "postgresql":
+        statements = statements + _PG_FILES_BYTEA_MIGRATION
     async with engine.begin() as conn:
         for sql in statements:
             try:
                 await conn.execute(text(sql))
             except Exception as e:
                 log.warning("schema_ensure: %s — %s", sql, e)
+        if dialect == "postgresql":
+            await _ensure_invoice_files_composite_pk_postgresql(conn)

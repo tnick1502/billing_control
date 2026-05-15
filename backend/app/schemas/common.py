@@ -363,9 +363,7 @@ class InvoiceRead(BaseModel):
 
 class FileRead(BaseModel):
     id: int
-    storage: str
-    bucket: str
-    object_key: str
+    filename: str
     content_type: str | None
     size_bytes: int | None
     uploaded_at: datetime

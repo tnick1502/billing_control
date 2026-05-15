@@ -194,7 +194,25 @@ export const api = {
   invoices: {
     list: () => fetchApi<Invoice[]>('/invoices'),
     get: (id: number) => fetchApi<Invoice>(`/invoices/${id}`),
-    create: (data: InvoiceCreate) => fetchApi<Invoice>('/invoices', { method: 'POST', body: JSON.stringify(data) }),
+    create: async (data: InvoiceCreate, file: File) => {
+      const fd = new FormData();
+      fd.append('invoice_no', data.invoice_no);
+      fd.append('invoice_date', data.invoice_date);
+      if (data.supplier != null && data.supplier !== '') fd.append('supplier', data.supplier);
+      if (data.total_amount != null && data.total_amount !== '') fd.append('total_amount', String(data.total_amount));
+      if (data.payment_date != null && data.payment_date !== '') fd.append('payment_date', data.payment_date);
+      if (data.description != null && data.description !== '') fd.append('description', data.description);
+      if (data.note != null && data.note !== '') fd.append('note', data.note);
+      fd.append('file', file);
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}/invoices`, {
+        method: 'POST',
+        body: fd,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw parseApiError(res, await res.text());
+      return res.json() as Promise<Invoice>;
+    },
     update: (id: number, data: Partial<InvoiceCreate>) => fetchApi<Invoice>(`/invoices/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     delete: (id: number) => fetchApi<void>(`/invoices/${id}`, { method: 'DELETE' }),
     files: (id: number) => fetchApi<InvoiceFileInfo[]>(`/invoices/${id}/files`),
@@ -207,7 +225,7 @@ export const api = {
         body: fd,
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw parseApiError(res, await res.text());
       return res.json();
     },
     parts: {
@@ -218,8 +236,15 @@ export const api = {
     },
   },
   files: {
-    presignedUrl: (fileId: number) => fetchApi<{ url: string }>(`/files/${fileId}/presigned-url`),
-  } as { presignedUrl: (fileId: number) => Promise<{ url: string }> },
+    downloadBlob: async (fileId: number): Promise<Blob> => {
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}/files/${fileId}/download`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw parseApiError(res, await res.text());
+      return res.blob();
+    },
+  },
   stats: {
     ordersDevicesTimeseries: (dateFrom: string, dateTo: string) => {
       const q = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
@@ -466,7 +491,7 @@ export interface MonthlyPlanPartWithCoverage extends MonthlyPlanPart {
 
 export interface InvoiceFileInfo {
   id: number;
-  object_key: string;
+  filename: string;
   content_type: string | null;
   size_bytes: number | null;
   uploaded_at: string;

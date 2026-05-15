@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from app.auth import auth_middleware, ensure_default_users
 from app.config import settings
 from app.api import auth, bom, devices, files, invoices, monthly_plans, orders, parts, stats
-from app.database import Base, async_session_maker, engine
+from app.database import Base, async_session_maker, engine, wipe_application_schema
 from app.schema_ensure import ensure_schema
 from app.seeds.init_data import seed_database
 
@@ -27,33 +28,21 @@ async def lifespan(app: FastAPI):
         f"[billing_control] DB TLS: ssl={settings.database_ssl} verify={settings.database_ssl_verify}",
         flush=True,
     )
+    #
+    # Полный сброс схемы и данных (DROP ALL + CREATE ALL таблиц приложения).
+    # Раскомментируйте ОДНУ строку ниже при необходимости, перезапустите backend, затем снова закомментируйте.
+    await wipe_application_schema(engine)
+    
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
     await ensure_schema()
 
-    # Полная очистка БД на старте. Раскомментируйте вручную, когда нужно
-    # сбросить все данные.
+    # Устаревший блок с TRUNCATE — оставлен для справки; предпочтительнее wipe_application_schema выше.
     # async with async_session_maker() as session:
     #     from app.seeds.init_data import clear_database
-    #
     #     await clear_database(session)
     #     await session.commit()
-    #
-    # Отдельная генерация тестовых данных после очистки. Раскомментируйте
-    # вместе с блоком выше или отдельно для пустой базы.
-    # async with async_session_maker() as session:
-    #     from app.seeds.init_data import generate_test_data
-    #
-    #     await generate_test_data(session)
-    #     await session.commit()
-
-    # Ensure S3 bucket exists
-    try:
-        from app.services.s3_service import ensure_bucket_exists
-        await ensure_bucket_exists()
-    except Exception as e:
-        print(f"S3 bucket init warning: {e}")
 
     # Seed if enabled
     if settings.seed_on_startup:
@@ -79,6 +68,13 @@ app = FastAPI(
     description="API for managing orders, devices, BOMs, monthly plans and invoices",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+# Чтобы в Docker/uvicorn в логах были traceback при 500 (logging.basicConfig до регистрации роутов)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s [%(name)s] %(message)s",
+    force=True,
 )
 
 app.add_middleware(

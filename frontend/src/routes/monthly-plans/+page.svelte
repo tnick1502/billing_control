@@ -342,8 +342,7 @@
       return;
     }
     try {
-      const inv = await api.invoices.create(invoicePayload(createInvoiceForm));
-      await api.invoices.upload(inv.id, createInvoiceFileInput.files[0]);
+      const inv = await api.invoices.create(invoicePayload(createInvoiceForm), createInvoiceFileInput.files[0]);
       for (const partId of createInvoicePartIds) {
         await api.invoices.parts.create(inv.id, {
           plan_id: createInvoicePlanId,

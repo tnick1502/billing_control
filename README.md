@@ -1,18 +1,18 @@
 # Billing control (MRP BOM Orders)
 
-Веб-приложение для учёта заказов, приборов, спецификаций (BOM), месячных планов и счетов с загрузкой файлов в S3 (MinIO).
+Веб-приложение для учёта заказов, приборов, спецификаций (BOM), месячных планов и счетов.
+
+**Вложения к счетам** (документы небольшого размера) хранятся в той же **PostgreSQL**: метаданные в `files`, двоичное тело в `file_contents` (отдельная строка на файл). Подробная логика бэкенда описана в [`backend/README.md`](backend/README.md).
 
 ## Стек
 
-- **Backend**: FastAPI, SQLAlchemy (async), PostgreSQL, MinIO (S3-совместимое хранилище)
-- **Frontend**: SvelteKit, Tailwind CSS
-- **Инфраструктура**: Docker Compose, Poetry (Python), npm (Node)
+- **Backend**: FastAPI, SQLAlchemy 2 (async), PostgreSQL, Pydantic v2  
+- **Frontend**: SvelteKit, Tailwind CSS  
+- **Запуск**: Docker Compose; локально — Poetry или `pip` по `requirements.txt`, на фронте — npm  
 
-## Запуски
+## Быстрый старт
 
-### Обычный запуск
-
-Обычный запуск поднимает только **backend** и **frontend**. PostgreSQL и S3/MinIO берутся из `.env`.
+### Продакшн-подобный compose (свой PostgreSQL из `.env`)
 
 ```bash
 ./hard_start.sh
@@ -24,9 +24,9 @@
 docker compose up --build -d
 ```
 
-### Dev запуск
+Поднимаются **backend** и **frontend**. База указывается переменными в **`.env`** (шаблон — **`.env.example`**).
 
-Dev запуск поднимает локальные контейнеры **PostgreSQL**, **MinIO**, **backend** и **frontend**:
+### Разработка: Postgres + приложение в Docker
 
 ```bash
 ./hard_start_dev.sh
@@ -38,49 +38,30 @@ Dev запуск поднимает локальные контейнеры **Po
 docker compose -f docker-compose.dev.yml up --build -d
 ```
 
-### URL после dev запуска
+| Сервис | URL (dev) |
+|--------|-----------|
+| UI | http://localhost:3000/ |
+| Swagger | http://localhost:8000/docs |
 
-| Сервис | Адрес (локально) |
-|--------|------------------|
-| Приложение (UI) | http://localhost:3000/ |
-| OpenAPI / Swagger | http://localhost:8000/docs |
-| MinIO Console | http://localhost:9001/ |
-| S3 API | http://localhost:9000/ |
+В compose без `-f dev.yml` UI обычно на `http://localhost/`, API на `http://localhost:8000/`.
 
-В обычном запуске frontend публикуется на `http://localhost/`, backend на `http://localhost:8000/`.
+## Переменные окружения
 
-MinIO в dev: логин и пароль — `MINIO_ROOT_USER` и `MINIO_ROOT_PASSWORD` из окружения или `minioadmin` / `minioadmin`.
+Файл **`.env`** в корне репозитория. Для Docker Compose допустимы только строки `КЛЮЧ=значение` и комментарии с `#` в начале строки — иначе ошибка парсера.
 
-### Переменные окружения (`.env`)
+Минимум для работы не на localhost:
 
-Compose подхватывает файл **`.env`** в корне репозитория. Шаблон — **`.env.example`**.
+- **`PUBLIC_ORIGIN`** — URL фронтенда без завершающего `/`  
+- **`DATABASE_URL`** — `postgresql+asyncpg://...`  
+- **`DATABASE_SSL`** / **`DATABASE_SSL_VERIFY`** — при необходимости TLS к облачному Postgres  
+- **`CORS_ORIGINS`** — разрешённые origin для браузера, через запятую (включая ваш UI и при необходимости `PUBLIC_ORIGIN`)  
+- **`SEED_ON_STARTUP`**, **`FORCE_RESEED`** — тестовые данные при старте (см. бэкенд README)  
 
-Синтаксис `.env` для Docker Compose: только строки **`ИМЯ=значение`** и комментарии, где **первый символ строки — `#`**. Строка вроде заголовка без `#` и без `=` приведёт к ошибке `unexpected character in variable name`.
+## Схема базы и обновления без Alembic
 
-На сервере или при доступе не с `localhost` задайте, как минимум:
+При старте приложение вызывает `Base.metadata.create_all` и затем дополняет схему скриптом [`backend/app/schema_ensure.py`](backend/app/schema_ensure.py) (недостающие колонки, приведение таблиц `files` / `file_contents` к актуальной модели). Если база сильно устарела относительно кода, надёжнее пересоздать БД или перенести данные вручную.
 
-- **`PUBLIC_ORIGIN`** — публичный URL frontend без слэша в конце, например `http://203.0.113.10` или `https://example.com`.
-- **`DATABASE_URL`** — PostgreSQL URL для backend (в проекте используется драйвер **asyncpg**: `postgresql+asyncpg://...`).
-- **`DATABASE_SSL`** — `true`, если облачный PostgreSQL требует TLS (иначе `false` или не задавайте).
-- **`DATABASE_SSL_VERIFY`** — `false`, если при `DATABASE_SSL=true` возникает `SSLCertVerificationError` (self-signed у провайдера); соединение остаётся по TLS, но без проверки цепочки сертификатов.
-- **`S3_ENDPOINT_URL`** — S3 endpoint, доступный backend.
-- **`S3_PUBLIC_ENDPOINT_URL`** — S3 endpoint, доступный браузеру для presigned-ссылок.
-- **`S3_ACCESS_KEY`** / **`S3_SECRET_KEY`** / **`S3_BUCKET`** / **`S3_REGION`** — параметры S3.
-- **`CORS_ORIGINS`** — список через запятую: ваш UI и при необходимости `PUBLIC_ORIGIN`.
-
-Иначе ссылки «Скачать» могут указывать на неверный хост.
-
-### Первый запуск
-
-При старте бэкенда (если включён сид):
-
-- создаются таблицы в БД (при отсутствии);
-- создаётся bucket в MinIO;
-- при необходимости заполняется БД тестовыми данными.
-
-## Локальная разработка
-
-### Frontend
+## Локальная разработка фронта
 
 ```bash
 cd frontend
@@ -88,30 +69,23 @@ npm install
 npm run dev
 ```
 
-Dev-сервер: http://localhost:5173. В `vite.config.ts` запросы **`/api/*`** проксируются на **`http://localhost:8000`** (префикс `/api` снимается).
+Сервер: http://localhost:5173. Запросы `/api/*` проксируются на backend (см. `vite.config.ts`).
 
-Для локального backend без контейнера используйте `docker-compose.dev.yml` для PostgreSQL/MinIO и экспортируйте `DATABASE_URL` / `S3_ENDPOINT_URL` на localhost.
+Backend без Docker: поднимите PostgreSQL, задайте `DATABASE_URL`, из каталога `backend`: `poetry run uvicorn app.main:app --reload`.
 
-Схема БД поднимается при старте приложения. Изменения моделей при разработке обычно сопровождают ручным SQL или пересозданием БД.
+## PostgreSQL 15+: нет прав на `public`
 
-## Скрипт `hard_start.sh`
-
-`hard_start.sh` перезапускает обычный стек. `hard_start_dev.sh` перезапускает dev стек с локальными PostgreSQL и MinIO.
+Если при старте видите `permission denied for schema public`, под администратором БД выдайте роли из `DATABASE_URL` права `USAGE, CREATE` на схему `public` (или сделайте пользователя владельцем базы) и перезапустите backend.
 
 ## API (кратко)
 
-Frontend проксирует запросы **`/api/*`** во внутренний backend.
+Полная схема — **/docs** на API.
 
-- `GET /health` — проверка
-- `GET/POST /devices` — приборы
-- `GET/POST /parts` — детали
-- `GET/POST /orders` — заказы
-- `GET/POST /devices/{id}/bom` — BOM прибора
-- `GET/POST /monthly-plans` — месячные планы
-- `POST /monthly-plans/generate` — генерация плана по заказам
-- `GET/POST /invoices` — счета
-- `POST /invoices/{id}/upload` — загрузка файла счёта в S3
-- `GET /stats/orders-devices-timeseries?date_from=&date_to=` — ряды по заказам и приборам
-- `GET /stats/orders-parts-timeseries?part_id=&date_from=&date_to=` — ряды по заказам детали
+- `GET /health`  
+- CRUD приборов, деталей, заказов, BOM, месячных планов  
+- `POST monthly-plans/generate` — генерация плана из заказов  
+- `POST /invoices` — создание счёта (**multipart**, обязательное поле файла)  
+- `GET /files/{id}/download` — скачивание вложения  
+- Статистика: `GET /stats/...`  
 
-Полная схема — в **http://localhost/api/docs** после запуска compose.
+Скрипты **`hard_start.sh`** / **`hard_start_dev.sh`** перезапускают соответствующий стек Docker.

@@ -1,8 +1,8 @@
 <script lang="ts">
   import { api } from '$lib/api';
 
-  let username = 'admin';
-  let password = 'admin';
+  let username = '';
+  let password = '';
   let loading = false;
   let error = '';
 

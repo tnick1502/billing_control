@@ -1,0 +1,2 @@
+Тестовый вложенный файл для демонстрации хранения в PostgreSQL.
+Sample invoice attachment for billing_control seed data.

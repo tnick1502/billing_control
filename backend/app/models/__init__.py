@@ -5,7 +5,7 @@ from app.models.order import Order, OrderItem
 from app.models.order_part_item import OrderPartItem
 from app.models.bom import DeviceBomVersion, DeviceBomItem
 from app.models.monthly_plan import MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPart, MonthlyPlanPartFile
-from app.models.invoice import Invoice, File, InvoiceFile, InvoicePartLink
+from app.models.invoice import FileContent, Invoice, File, InvoiceFile, InvoicePartLink
 from app.models.auth import User, AuditLog
 
 __all__ = [
@@ -24,6 +24,7 @@ __all__ = [
     "MonthlyPlanPartFile",
     "Invoice",
     "File",
+    "FileContent",
     "InvoiceFile",
     "InvoicePartLink",
     "User",

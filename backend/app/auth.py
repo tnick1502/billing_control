@@ -1,3 +1,4 @@
+import logging
 import secrets
 from typing import Awaitable, Callable
 
@@ -22,6 +23,15 @@ PUBLIC_PATHS = {
     "/redoc",
     "/openapi.json",
 }
+
+log = logging.getLogger(__name__)
+
+
+def employee_may_write(path: str) -> bool:
+    """Сотрудник: просмотр везде + создание/правка счетов и вложений (префикс /invoices)."""
+    if path in EMPLOYEE_WRITE_PATHS:
+        return True
+    return path == "/invoices" or path.startswith("/invoices/")
 
 
 def make_token() -> str:
@@ -121,14 +131,26 @@ async def auth_middleware(request: Request, call_next: Callable[[Request], Await
         if path.startswith("/admin") and user.role != ADMIN_ROLE:
             return JSONResponse(status_code=403, content={"detail": "Доступ только для администратора"})
 
-        if method not in SAFE_METHODS and user.role != ADMIN_ROLE and path not in EMPLOYEE_WRITE_PATHS:
+        if method not in SAFE_METHODS and user.role != ADMIN_ROLE and not employee_may_write(path):
             await write_audit_log(session, user, method, path, 403, "Попытка изменения без прав администратора")
-            return JSONResponse(status_code=403, content={"detail": "Сотрудник может только просматривать данные"})
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Это действие доступно только администратору"},
+            )
 
         request.state.user = user
         response = await call_next(request)
 
         if method not in SAFE_METHODS and path != "/auth/logout":
-            await write_audit_log(session, user, method, path, response.status_code)
+            try:
+                status = getattr(response, "status_code", None) or 200
+                await write_audit_log(session, user, method, path, status)
+            except Exception:
+                # Счёт/файл уже закоммичены в своей сессии; не превращаем сбой аудита в 500 для клиента
+                log.exception(
+                    "audit_logs: не удалось записать запись аудита (%s %s); ответ клиенту без изменений",
+                    method,
+                    path,
+                )
 
         return response
