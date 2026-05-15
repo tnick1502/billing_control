@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import { formatQty, formatIntegerQty, formatAmount, formatDate } from '$lib/format';
-  import type { MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPartWithCoverage, InvoiceCreate, Invoice, PartInvoiceCoverage } from '$lib/api';
+  import { formatQty, formatIntegerQty, formatAmount, formatDate, formatDateTime, formatFileSize } from '$lib/format';
+  import type { MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPartWithCoverage, InvoiceCreate, Invoice, PartInvoiceCoverage, InvoiceFileInfo } from '$lib/api';
 
   type PlanDetail = { devices: MonthlyPlanDevice[]; parts: MonthlyPlanPartWithCoverage[] };
 
@@ -41,6 +41,7 @@
   let editInvoiceForm: InvoiceCreate = emptyInvoiceForm();
   let editInvoiceLinkQty = '';
   let expandedInvoiceLinks: Record<number, boolean> = {};
+  let invoiceFilesCache: Record<number, InvoiceFileInfo[]> = {};
   let expandedPlans: Record<number, boolean> = {};
   let planExpansionInitialized = false;
 
@@ -174,8 +175,33 @@
     return Number(p.qty_covered_total ?? 0) >= Number(p.qty_required);
   }
 
-  function toggleInvoiceDetails(linkId: number) {
-    expandedInvoiceLinks = { ...expandedInvoiceLinks, [linkId]: !expandedInvoiceLinks[linkId] };
+  async function toggleInvoiceDetails(inv: PartInvoiceCoverage) {
+    const wasExpanded = expandedInvoiceLinks[inv.link_id];
+    expandedInvoiceLinks = { ...expandedInvoiceLinks, [inv.link_id]: !wasExpanded };
+    if (!wasExpanded && !(inv.invoice_id in invoiceFilesCache)) {
+      try {
+        const files = await api.invoices.files(inv.invoice_id);
+        invoiceFilesCache = { ...invoiceFilesCache, [inv.invoice_id]: files };
+      } catch {
+        invoiceFilesCache = { ...invoiceFilesCache, [inv.invoice_id]: [] };
+      }
+    }
+  }
+
+  async function downloadFile(fileId: number, suggestedFilename?: string) {
+    try {
+      const blob = await api.files.downloadBlob(fileId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = suggestedFilename?.trim() || `file-${fileId}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert((e as Error).message);
+    }
   }
 
   function planMonthKey(plan: MonthlyPlan) {
@@ -490,50 +516,75 @@
                           из <span class="font-mono">{formatIntegerQty(p.qty_required)}</span>
                         </div>
                         {#if p.has_invoice}
-                          <ul class="space-y-1 text-[11px]">
+                          <ul class="mt-2 space-y-1.5 text-[11px]">
                             {#each p.invoices ?? [] as inv}
+                              {@const isExpanded = !!expandedInvoiceLinks[inv.link_id]}
                               <li
-                                class="rounded border px-2 py-1 {inv.payment_date
+                                class="rounded border {inv.payment_date
                                   ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-100'
                                   : 'bg-red-500/15 border-red-500/40 text-red-100'}"
+                                on:click={() => toggleInvoiceDetails(inv)}
+                                on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleInvoiceDetails(inv)}
+                                role="button"
+                                tabindex="0"
                               >
-                                <div class="flex items-center gap-2 min-w-0">
+                                <div class="flex items-center gap-2 min-w-0 px-2 py-1.5 cursor-pointer">
+                                  <span class="text-zinc-400 text-[10px] shrink-0">{isExpanded ? '▾' : '▸'}</span>
                                   <span class="font-mono shrink-0">№{inv.invoice_no}</span>
                                   <span class="min-w-0 flex-1 truncate text-zinc-300">{inv.supplier || 'без поставщика'}</span>
                                   <span class="font-mono shrink-0">покр. {formatIntegerQty(inv.qty_covered)}</span>
-                                  <span class="shrink-0">опл. {formatDate(inv.payment_date)}</span>
-                                  <button
-                                    type="button"
-                                    class="shrink-0 text-xs text-sky-300 hover:text-sky-200 underline"
-                                    on:click={() => toggleInvoiceDetails(inv.link_id)}
-                                  >
-                                    {expandedInvoiceLinks[inv.link_id] ? 'Скрыть' : 'Детали'}
-                                  </button>
+                                  <span class="shrink-0 {inv.payment_date ? 'text-emerald-300' : 'text-red-300'}">опл. {formatDate(inv.payment_date)}</span>
                                   <button
                                     type="button"
                                     class="shrink-0 text-xs text-amber-300 hover:text-amber-200 underline"
-                                    on:click={() => openEditInvoiceModal(inv)}
+                                    on:click|stopPropagation={() => openEditInvoiceModal(inv)}
                                   >
                                     Изм.
                                   </button>
                                   <button
                                     type="button"
                                     class="shrink-0 text-xs text-red-300 hover:text-red-200 underline"
-                                    on:click={() => unlinkLink(inv.invoice_id, inv.link_id)}
+                                    on:click|stopPropagation={() => unlinkLink(inv.invoice_id, inv.link_id)}
                                   >
                                     Отвязать
                                   </button>
                                 </div>
-                                {#if expandedInvoiceLinks[inv.link_id]}
-                                  <div class="mt-1 space-y-0.5 border-t border-white/10 pt-1 text-zinc-300">
-                                    <div class="font-mono">№{inv.invoice_no}</div>
-                                    {#if inv.supplier}
-                                      <div>{inv.supplier}</div>
-                                    {/if}
-                                    <div class="font-mono">Покрыто: {formatIntegerQty(inv.qty_covered)}</div>
-                                    <div class={inv.payment_date ? 'text-emerald-300' : 'text-red-300'}>
-                                      оплата: {formatDate(inv.payment_date)}
+                                {#if isExpanded}
+                                  <div class="border-t border-white/10 px-2 py-2 space-y-2">
+                                    <div class="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px] text-zinc-300">
+                                      <div><span class="text-zinc-500">Номер:</span> <span class="font-mono">№{inv.invoice_no}</span></div>
+                                      {#if inv.supplier}<div class="col-span-2"><span class="text-zinc-500">Поставщик:</span> {inv.supplier}</div>{/if}
+                                      <div><span class="text-zinc-500">Покрыто:</span> <span class="font-mono">{formatIntegerQty(inv.qty_covered)}</span></div>
+                                      <div class="{inv.payment_date ? 'text-emerald-300' : 'text-red-300'}">
+                                        <span class="text-zinc-500">Оплата:</span> {formatDate(inv.payment_date)}
+                                      </div>
                                     </div>
+                                    {#if invoiceFilesCache[inv.invoice_id] === undefined}
+                                      <div class="text-[10px] text-zinc-500">Загрузка файлов…</div>
+                                    {:else if invoiceFilesCache[inv.invoice_id].length === 0}
+                                      <div class="text-[10px] text-zinc-500">Нет вложений</div>
+                                    {:else}
+                                      <div class="space-y-1">
+                                        <div class="text-[10px] text-zinc-500 font-medium uppercase tracking-wide">Файлы</div>
+                                        {#each invoiceFilesCache[inv.invoice_id] as f}
+                                          <div class="flex items-center gap-2 rounded bg-black/20 px-2 py-1">
+                                            <div class="min-w-0 flex-1">
+                                              <div class="truncate text-[10px] text-zinc-200">{f.filename}</div>
+                                              <div class="text-[9px] text-zinc-500">
+                                                {formatDateTime(f.uploaded_at)}{f.size_bytes != null ? ` · ${formatFileSize(f.size_bytes)}` : ''}
+                                              </div>
+                                            </div>
+                                            <button
+                                              type="button"
+                                              on:click|stopPropagation={() => downloadFile(f.id, f.filename)}
+                                              class="shrink-0 px-2 py-0.5 text-[10px] bg-zinc-700 rounded hover:bg-zinc-600 text-white"
+                                            >
+                                              Скачать
+                                            </button>
+                                          </div>
+                                        {/each}
+                                      </div>
+                                    {/if}
                                   </div>
                                 {/if}
                               </li>
@@ -632,32 +683,52 @@
 
 {#if editInvoiceModalOpen}
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" on:click={() => editInvoiceModalOpen = false} role="button" tabindex="0">
-    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
+    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto border border-zinc-700" on:click|stopPropagation role="dialog">
       <h2 class="text-lg font-semibold text-white mb-4">Редактировать счёт</h2>
       <form on:submit|preventDefault={saveEditInvoice} class="space-y-4">
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Номер счёта</label>
-          <input bind:value={editInvoiceForm.invoice_no} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
-        </div>
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Поставщик</label>
-          <input bind:value={editInvoiceForm.supplier} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
-        </div>
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Дата</label>
-          <input type="date" bind:value={editInvoiceForm.invoice_date} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
-        </div>
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Дата оплаты</label>
-          <input type="date" bind:value={editInvoiceForm.payment_date} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
-        </div>
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Сумма счёта</label>
-          <input type="number" step="0.01" bind:value={editInvoiceForm.total_amount} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
-        </div>
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Покрыто</label>
-          <input type="number" step="1" min="0" bind:value={editInvoiceLinkQty} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        <div class="grid gap-4 md:grid-cols-2">
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">Номер счёта <span class="text-red-400">*</span></label>
+            <input bind:value={editInvoiceForm.invoice_no} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
+          </div>
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">Поставщик</label>
+            <input bind:value={editInvoiceForm.supplier} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+          </div>
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">Дата счёта <span class="text-red-400">*</span></label>
+            <input type="date" bind:value={editInvoiceForm.invoice_date} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
+          </div>
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">Дата оплаты</label>
+            <input type="date" bind:value={editInvoiceForm.payment_date} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+          </div>
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">Сумма счёта</label>
+            <input type="number" step="0.01" bind:value={editInvoiceForm.total_amount} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+          </div>
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">Покрыто (деталей)</label>
+            <input type="number" step="1" min="0" bind:value={editInvoiceLinkQty} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-sm text-zinc-400 mb-1">Описание</label>
+            <textarea
+              bind:value={editInvoiceForm.description}
+              rows="2"
+              placeholder="Опционально"
+              class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white resize-none"
+            ></textarea>
+          </div>
+          <div class="md:col-span-2">
+            <label class="block text-sm text-zinc-400 mb-1">Заметка</label>
+            <textarea
+              bind:value={editInvoiceForm.note}
+              rows="2"
+              placeholder="Опционально"
+              class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white resize-none"
+            ></textarea>
+          </div>
         </div>
         <div class="flex gap-2 pt-2">
           <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Сохранить</button>
