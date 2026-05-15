@@ -27,8 +27,9 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://localhost:3000,http://localhost"
     seed_on_startup: bool = True
     force_reseed: bool = False
+    wipe_db: bool = False
 
-    @field_validator("database_ssl", "database_ssl_verify", "seed_on_startup", "force_reseed", mode="before")
+    @field_validator("database_ssl", "database_ssl_verify", "seed_on_startup", "force_reseed", "wipe_db", mode="before")
     @classmethod
     def coerce_env_bool_fields(cls, v: object) -> object:
         return _coerce_env_bool(v)

@@ -28,11 +28,9 @@ async def lifespan(app: FastAPI):
         f"[billing_control] DB TLS: ssl={settings.database_ssl} verify={settings.database_ssl_verify}",
         flush=True,
     )
-    #
-    # Полный сброс схемы и данных (DROP ALL + CREATE ALL таблиц приложения).
-    # Раскомментируйте ОДНУ строку ниже при необходимости, перезапустите backend, затем снова закомментируйте.
-    await wipe_application_schema(engine)
-    
+    if settings.wipe_db:
+        await wipe_application_schema(engine)
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

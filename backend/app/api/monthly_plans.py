@@ -80,12 +80,16 @@ async def delete_monthly_plan(plan_id: int, session: AsyncSession = Depends(get_
 
 @router.get("/{plan_id}/devices", response_model=list[MonthlyPlanDeviceRead])
 async def list_plan_devices(plan_id: int, session: AsyncSession = Depends(get_db)):
+    if not await session.get(MonthlyPlan, plan_id):
+        raise HTTPException(404, "Monthly plan not found")
     result = await session.execute(select(MonthlyPlanDevice).where(MonthlyPlanDevice.plan_id == plan_id))
     return result.scalars().all()
 
 
 @router.get("/{plan_id}/parts", response_model=list[MonthlyPlanPartRead])
 async def list_plan_parts(plan_id: int, session: AsyncSession = Depends(get_db)):
+    if not await session.get(MonthlyPlan, plan_id):
+        raise HTTPException(404, "Monthly plan not found")
     result = await session.execute(select(MonthlyPlanPart).where(MonthlyPlanPart.plan_id == plan_id))
     return result.scalars().all()
 
@@ -119,6 +123,8 @@ async def update_plan_part_qty_delivered(
 @router.get("/{plan_id}/parts-with-coverage")
 async def list_plan_parts_with_coverage(plan_id: int, session: AsyncSession = Depends(get_db)):
     """Returns plan parts with invoice coverage (invoice_no for each part)."""
+    if not await session.get(MonthlyPlan, plan_id):
+        raise HTTPException(404, "Monthly plan not found")
     parts_result = await session.execute(
         select(MonthlyPlanPart).where(MonthlyPlanPart.plan_id == plan_id)
     )

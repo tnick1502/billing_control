@@ -1,6 +1,8 @@
 from datetime import date
 from decimal import Decimal
 
+from decimal import InvalidOperation
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,8 +39,8 @@ def _clean_invoice_payload(d: dict) -> dict:
     if out.get("total_amount") is not None:
         try:
             out["total_amount"] = Decimal(str(out["total_amount"]))
-        except Exception:
-            out["total_amount"] = None
+        except (ValueError, InvalidOperation):
+            raise HTTPException(400, "Некорректная сумма счёта")
     return {k: v for k, v in out.items() if v is not None}
 
 
@@ -135,11 +137,6 @@ async def update_invoice(invoice_id: int, data: InvoiceUpdate, session: AsyncSes
         update_data["invoice_no"] = update_data["invoice_no"].strip()
     if "invoice_no" in update_data and not update_data["invoice_no"]:
         raise HTTPException(400, "Номер счета обязателен")
-    if update_data.get("total_amount") is not None:
-        try:
-            update_data["total_amount"] = Decimal(str(update_data["total_amount"]))
-        except Exception:
-            update_data["total_amount"] = None
     for k, v in update_data.items():
         setattr(invoice, k, v)
     await session.flush()
@@ -163,6 +160,8 @@ async def delete_invoice(invoice_id: int, session: AsyncSession = Depends(get_db
 
 @router.get("/{invoice_id}/files", response_model=list[FileRead])
 async def list_invoice_files(invoice_id: int, session: AsyncSession = Depends(get_db)):
+    if not await session.get(Invoice, invoice_id):
+        raise HTTPException(404, "Invoice not found")
     result = await session.execute(
         select(FileModel)
         .join(InvoiceFile, InvoiceFile.file_id == FileModel.id)
@@ -195,6 +194,8 @@ async def upload_invoice_file(
 
 @router.get("/{invoice_id}/parts", response_model=list[InvoicePartLinkRead])
 async def list_invoice_parts(invoice_id: int, session: AsyncSession = Depends(get_db)):
+    if not await session.get(Invoice, invoice_id):
+        raise HTTPException(404, "Invoice not found")
     result = await session.execute(select(InvoicePartLink).where(InvoicePartLink.invoice_id == invoice_id))
     return result.scalars().all()
 

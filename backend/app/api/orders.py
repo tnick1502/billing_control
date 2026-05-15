@@ -69,6 +69,8 @@ async def delete_order(order_id: int, session: AsyncSession = Depends(get_db)):
 
 @router.get("/{order_id}/items", response_model=list[OrderItemRead])
 async def list_order_items(order_id: int, session: AsyncSession = Depends(get_db)):
+    if not await session.get(Order, order_id):
+        raise HTTPException(404, "Order not found")
     result = await session.execute(
         select(OrderItem)
         .where(OrderItem.order_id == order_id)
@@ -137,6 +139,8 @@ async def delete_order_item(order_id: int, item_id: int, session: AsyncSession =
 
 @router.get("/{order_id}/part-items", response_model=list[OrderPartItemRead])
 async def list_order_part_items(order_id: int, session: AsyncSession = Depends(get_db)):
+    if not await session.get(Order, order_id):
+        raise HTTPException(404, "Order not found")
     result = await session.execute(select(OrderPartItem).where(OrderPartItem.order_id == order_id))
     return result.scalars().all()
 

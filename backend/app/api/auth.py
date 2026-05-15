@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import ADMIN_ROLE, make_token, normalize_role, require_admin, write_audit_log
+from app.auth import ADMIN_ROLE, hash_password, make_token, normalize_role, require_admin, verify_password, write_audit_log
 from app.database import get_db
 from app.models import AuditLog, User
 from app.schemas.common import AuditLogRead, AuthToken, UserCreate, UserLogin, UserRead, UserUpdate
@@ -14,7 +14,7 @@ router = APIRouter(tags=["auth"])
 async def login(data: UserLogin, session: AsyncSession = Depends(get_db)):
     result = await session.execute(select(User).where(User.username == data.username))
     user = result.scalar_one_or_none()
-    if not user or user.password != data.password or not user.is_active:
+    if not user or not user.is_active or not verify_password(data.password, user.password):
         await write_audit_log(session, user, "POST", "/auth/login", 401, f"Неуспешный вход: {data.username}")
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
 
@@ -57,7 +57,7 @@ async def create_user(
     role = normalize_role(data.role)
     user = User(
         username=data.username.strip(),
-        password=data.password,
+        password=hash_password(data.password),
         full_name=data.full_name,
         role=role,
         is_active=data.is_active,
@@ -84,6 +84,8 @@ async def update_user(
         update_data["role"] = normalize_role(update_data["role"])
     if "username" in update_data and update_data["username"] is not None:
         update_data["username"] = update_data["username"].strip()
+    if "password" in update_data and update_data["password"] is not None:
+        update_data["password"] = hash_password(update_data["password"])
 
     for key, value in update_data.items():
         setattr(user, key, value)

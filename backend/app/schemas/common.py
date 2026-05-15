@@ -320,7 +320,7 @@ class MonthlyPlanPartRead(BaseModel):
 
 
 class MonthlyPlanPartQtyDeliveredUpdate(BaseModel):
-    qty_delivered: Decimal
+    qty_delivered: Decimal = Field(ge=0)
 
 
 class InvoiceBase(BaseModel):

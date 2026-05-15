@@ -4,11 +4,20 @@ from typing import Awaitable, Callable
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, Response
+import bcrypt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_maker
 from app.models import AuditLog, User
+
+
+def hash_password(plain: str) -> str:
+    return bcrypt.hashpw(plain.encode(), bcrypt.gensalt()).decode()
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode(), hashed.encode())
 
 ADMIN_ROLE = "admin"
 EMPLOYEE_ROLE = "employee"
@@ -62,16 +71,25 @@ async def user_by_token(session: AsyncSession, token: str) -> User | None:
 
 async def ensure_default_users() -> None:
     async with async_session_maker() as session:
-        exists = await session.scalar(select(User.id).limit(1))
-        if exists:
+        result = await session.execute(select(User))
+        users = result.scalars().all()
+        if not users:
+            session.add_all(
+                [
+                    User(username="admin", password=hash_password("admin"), full_name="Администратор", role=ADMIN_ROLE, is_active=True),
+                    User(username="employee", password=hash_password("employee"), full_name="Сотрудник", role=EMPLOYEE_ROLE, is_active=True),
+                ]
+            )
+            await session.commit()
             return
-        session.add_all(
-            [
-                User(username="admin", password="admin", full_name="Администратор", role=ADMIN_ROLE, is_active=True),
-                User(username="employee", password="employee", full_name="Сотрудник", role=EMPLOYEE_ROLE, is_active=True),
-            ]
-        )
-        await session.commit()
+        # Migrate any plain-text passwords to bcrypt
+        migrated = False
+        for user in users:
+            if not user.password.startswith("$2"):
+                user.password = hash_password(user.password)
+                migrated = True
+        if migrated:
+            await session.commit()
 
 
 async def get_current_user(request: Request) -> User:
