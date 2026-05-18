@@ -1,10 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import Part
-from app.schemas.common import PartCreate, PartRead, PartUpdate
+from app.models.bom import DeviceBomItem
+from app.models.invoice import InvoicePartLink
+from app.models.monthly_plan import MonthlyPlanPart
+from app.models.order_part_item import OrderPartItem
+from app.schemas.common import PartArchiveUpdate, PartCreate, PartRead, PartUpdate
 
 router = APIRouter(prefix="/parts", tags=["parts"])
 
@@ -44,9 +48,46 @@ async def _ensure_part_unique(
         )
 
 
+async def _check_part_references(session: AsyncSession, part_id: int) -> list[str]:
+    """Returns a list of human-readable descriptions of existing references."""
+    refs: list[str] = []
+
+    bom_count = await session.scalar(
+        select(func.count()).where(DeviceBomItem.part_id == part_id)
+    )
+    if bom_count:
+        refs.append(f"спецификации ({bom_count} шт.)")
+
+    plan_count = await session.scalar(
+        select(func.count()).where(MonthlyPlanPart.part_id == part_id)
+    )
+    if plan_count:
+        refs.append(f"месячные планы ({plan_count} шт.)")
+
+    invoice_count = await session.scalar(
+        select(func.count()).where(InvoicePartLink.part_id == part_id)
+    )
+    if invoice_count:
+        refs.append(f"счета ({invoice_count} шт.)")
+
+    order_count = await session.scalar(
+        select(func.count()).where(OrderPartItem.part_id == part_id)
+    )
+    if order_count:
+        refs.append(f"заказы ({order_count} шт.)")
+
+    return refs
+
+
 @router.get("", response_model=list[PartRead])
-async def list_parts(session: AsyncSession = Depends(get_db)):
-    result = await session.execute(select(Part).order_by(Part.id))
+async def list_parts(
+    include_archived: bool = Query(False, alias="include_archived"),
+    session: AsyncSession = Depends(get_db),
+):
+    q = select(Part).order_by(Part.id)
+    if not include_archived:
+        q = q.where(Part.is_archived == False)  # noqa: E712
+    result = await session.execute(q)
     return result.scalars().all()
 
 
@@ -91,11 +132,30 @@ async def update_part(part_id: int, data: PartUpdate, session: AsyncSession = De
     return part
 
 
+@router.patch("/{part_id}/archive", response_model=PartRead)
+async def archive_part(part_id: int, data: PartArchiveUpdate, session: AsyncSession = Depends(get_db)):
+    result = await session.execute(select(Part).where(Part.id == part_id))
+    part = result.scalar_one_or_none()
+    if not part:
+        raise HTTPException(404, "Part not found")
+    part.is_archived = data.is_archived
+    await session.flush()
+    await session.refresh(part)
+    return part
+
+
 @router.delete("/{part_id}", status_code=204)
 async def delete_part(part_id: int, session: AsyncSession = Depends(get_db)):
     result = await session.execute(select(Part).where(Part.id == part_id))
     part = result.scalar_one_or_none()
     if not part:
         raise HTTPException(404, "Part not found")
+    refs = await _check_part_references(session, part_id)
+    if refs:
+        refs_str = ", ".join(refs)
+        raise HTTPException(
+            status_code=409,
+            detail=f"Нельзя удалить деталь: она используется в {refs_str}. Используйте архивирование.",
+        )
     await session.delete(part)
     return None

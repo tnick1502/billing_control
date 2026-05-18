@@ -1,12 +1,16 @@
 from decimal import Decimal
+from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPart, InvoicePartLink, Invoice
+from app.models.monthly_plan import MonthlyPlanPartFile
+from app.models.invoice import File as FileModel
 from app.schemas.common import (
+    FileRead,
     MonthlyPlanCreate,
     MonthlyPlanRead,
     MonthlyPlanUpdate,
@@ -15,6 +19,7 @@ from app.schemas.common import (
     MonthlyPlanPartRead,
     MonthlyPlanPartQtyDeliveredUpdate,
 )
+from app.services.file_storage import delete_orphaned_files, save_upload_as_file
 from app.services.monthly_plan import generate_monthly_plan as do_generate
 
 router = APIRouter(prefix="/monthly-plans", tags=["monthly-plans"])
@@ -74,6 +79,14 @@ async def delete_monthly_plan(plan_id: int, session: AsyncSession = Depends(get_
     plan = result.scalar_one_or_none()
     if not plan:
         raise HTTPException(404, "Monthly plan not found")
+    link_count = await session.scalar(
+        select(func.count()).where(InvoicePartLink.plan_id == plan_id)
+    )
+    if link_count:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Нельзя удалить план: к нему привязано {link_count} счетов. Удалите привязки счётов перед удалением плана.",
+        )
     await session.delete(plan)
     return None
 
@@ -120,9 +133,79 @@ async def update_plan_part_qty_delivered(
     return row
 
 
+@router.get("/{plan_id}/parts/{plan_part_id}/files", response_model=list[FileRead])
+async def list_plan_part_files(plan_id: int, plan_part_id: int, session: AsyncSession = Depends(get_db)):
+    row = await session.scalar(
+        select(MonthlyPlanPart).where(
+            MonthlyPlanPart.id == plan_part_id,
+            MonthlyPlanPart.plan_id == plan_id,
+        )
+    )
+    if not row:
+        raise HTTPException(404, "Строка плана не найдена")
+    result = await session.execute(
+        select(FileModel)
+        .join(MonthlyPlanPartFile, MonthlyPlanPartFile.file_id == FileModel.id)
+        .where(MonthlyPlanPartFile.plan_part_id == plan_part_id)
+        .order_by(MonthlyPlanPartFile.created_at)
+    )
+    return result.scalars().all()
+
+
+@router.post("/{plan_id}/parts/{plan_part_id}/files", response_model=list[FileRead])
+async def upload_plan_part_files(
+    plan_id: int,
+    plan_part_id: int,
+    files: List[UploadFile] = File(...),
+    session: AsyncSession = Depends(get_db),
+):
+    row = await session.scalar(
+        select(MonthlyPlanPart).where(
+            MonthlyPlanPart.id == plan_part_id,
+            MonthlyPlanPart.plan_id == plan_id,
+        )
+    )
+    if not row:
+        raise HTTPException(404, "Строка плана не найдена")
+    if not files:
+        raise HTTPException(400, "Файлы не переданы")
+    saved: list[FileModel] = []
+    for upload in files:
+        try:
+            f = await save_upload_as_file(session, upload)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        link = MonthlyPlanPartFile(plan_part_id=plan_part_id, file_id=f.id)
+        session.add(link)
+        saved.append(f)
+    await session.flush()
+    return saved
+
+
+@router.delete("/{plan_id}/parts/{plan_part_id}/files/{file_id}", status_code=204)
+async def delete_plan_part_file(
+    plan_id: int,
+    plan_part_id: int,
+    file_id: int,
+    session: AsyncSession = Depends(get_db),
+):
+    link = await session.scalar(
+        select(MonthlyPlanPartFile).where(
+            MonthlyPlanPartFile.plan_part_id == plan_part_id,
+            MonthlyPlanPartFile.file_id == file_id,
+        )
+    )
+    if not link:
+        raise HTTPException(404, "Файл не найден")
+    await session.delete(link)
+    await session.flush()
+    await delete_orphaned_files(session, [file_id])
+    return None
+
+
 @router.get("/{plan_id}/parts-with-coverage")
 async def list_plan_parts_with_coverage(plan_id: int, session: AsyncSession = Depends(get_db)):
-    """Returns plan parts with invoice coverage (invoice_no for each part)."""
+    """Returns plan parts with invoice coverage and attached delivery files."""
     if not await session.get(MonthlyPlan, plan_id):
         raise HTTPException(404, "Monthly plan not found")
     parts_result = await session.execute(
@@ -154,6 +237,26 @@ async def list_plan_parts_with_coverage(plan_id: int, session: AsyncSession = De
                 "qty_covered": str(row.qty_covered) if row.qty_covered is not None else None,
             }
         )
+
+    # Load files for all plan parts in one query
+    files_result = await session.execute(
+        select(MonthlyPlanPartFile, FileModel)
+        .join(FileModel, FileModel.id == MonthlyPlanPartFile.file_id)
+        .where(MonthlyPlanPartFile.plan_part_id.in_([p.id for p in parts]))
+        .order_by(MonthlyPlanPartFile.created_at)
+    )
+    files_by_plan_part: dict[int, list[dict]] = {p.id: [] for p in parts}
+    for link, f in files_result.all():
+        files_by_plan_part.setdefault(link.plan_part_id, []).append(
+            {
+                "id": f.id,
+                "filename": f.filename,
+                "content_type": f.content_type,
+                "size_bytes": f.size_bytes,
+                "uploaded_at": f.uploaded_at.isoformat(),
+            }
+        )
+
     out = []
     for p in parts:
         qty_del = p.qty_delivered
@@ -177,6 +280,7 @@ async def list_plan_parts_with_coverage(plan_id: int, session: AsyncSession = De
                 "qty_covered_total": str(qty_covered_total),
                 "coverage_complete": bool(qty_covered_total >= req),
                 "delivery_complete": bool(qty_del >= req),
+                "files": files_by_plan_part.get(p.id, []),
             }
         )
     return out

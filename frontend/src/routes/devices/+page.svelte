@@ -8,16 +8,18 @@
   let modalOpen = false;
   let form: DeviceCreate = { primary_name: '', model: '', description: null };
   let editingId: number | null = null;
+  let editingIsArchived = false;
   let searchQuery = '';
+  let showArchived = false;
 
-  $: filteredDevices = filterDevices(devices, searchQuery);
+  $: filteredDevices = filterDevices(devices, searchQuery, showArchived);
 
   onMount(load);
 
   async function load() {
     loading = true;
     try {
-      devices = await api.devices.list();
+      devices = await api.devices.list(true);
     } catch (e) {
       console.error(e);
     } finally {
@@ -27,20 +29,23 @@
 
   function openCreate() {
     editingId = null;
+    editingIsArchived = false;
     form = { primary_name: '', model: '', description: null };
     modalOpen = true;
   }
 
   function openEdit(d: Device) {
     editingId = d.id;
+    editingIsArchived = d.is_archived;
     form = { primary_name: d.primary_name, model: d.model ?? '', description: d.description ?? null };
     modalOpen = true;
   }
 
-  function filterDevices(items: Device[], query: string) {
+  function filterDevices(items: Device[], query: string, archived: boolean) {
+    const visible = archived ? items : items.filter((d) => !d.is_archived);
     const needle = query.trim().toLowerCase();
-    if (!needle) return items;
-    return items.filter((d) => {
+    if (!needle) return visible;
+    return visible.filter((d) => {
       const haystack = `${d.primary_name ?? ''} ${d.model ?? ''} ${d.description ?? ''}`.toLowerCase();
       return haystack.includes(needle);
     });
@@ -67,8 +72,19 @@
     }
   }
 
+  async function toggleArchive(id: number, currentlyArchived: boolean) {
+    try {
+      await api.devices.archive(id, !currentlyArchived);
+      modalOpen = false;
+      editingId = null;
+      load();
+    } catch (e) {
+      alert((e as Error).message);
+    }
+  }
+
   async function remove(id: number) {
-    if (!confirm('Удалить прибор?')) return;
+    if (!confirm('Удалить прибор? Это действие нельзя отменить.')) return;
     try {
       await api.devices.delete(id);
       modalOpen = false;
@@ -88,14 +104,20 @@
     </button>
   </div>
 
-  <div class="mb-4 rounded-xl border border-zinc-700 bg-surface-800 p-4">
-    <label class="block text-xs text-zinc-400 mb-1" for="device-search">Поиск по приборам</label>
-    <input
-      id="device-search"
-      bind:value={searchQuery}
-      placeholder="Название, модель, описание..."
-      class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
-    />
+  <div class="mb-4 rounded-xl border border-zinc-700 bg-surface-800 p-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+    <div class="flex-1">
+      <label class="block text-xs text-zinc-400 mb-1" for="device-search">Поиск по приборам</label>
+      <input
+        id="device-search"
+        bind:value={searchQuery}
+        placeholder="Название, модель, описание..."
+        class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
+      />
+    </div>
+    <label class="flex items-center gap-2 text-sm text-zinc-400 cursor-pointer select-none">
+      <input type="checkbox" bind:checked={showArchived} class="w-4 h-4 accent-amber-500" />
+      Показать архивные
+    </label>
   </div>
 
   {#if loading}
@@ -114,14 +136,19 @@
         <tbody class="divide-y divide-zinc-800">
           {#each filteredDevices as d}
             <tr
-              class="cursor-pointer hover:bg-zinc-800/50"
+              class="cursor-pointer hover:bg-zinc-800/50 {d.is_archived ? 'opacity-50' : ''}"
               on:click={() => openEdit(d)}
               on:keydown={(event) => handleRowKeydown(event, d)}
               role="button"
               tabindex="0"
             >
               <td class="px-4 py-3 font-mono text-sm">{d.id ?? '—'}</td>
-              <td class="px-4 py-3">{d.primary_name}</td>
+              <td class="px-4 py-3">
+                <span class="{d.is_archived ? 'line-through text-zinc-500' : ''}">{d.primary_name}</span>
+                {#if d.is_archived}
+                  <span class="ml-2 px-1.5 py-0.5 text-[10px] bg-zinc-700 text-zinc-400 rounded">Архив</span>
+                {/if}
+              </td>
               <td class="px-4 py-3 text-zinc-400">{d.model || '—'}</td>
               <td class="px-4 py-3 text-zinc-400 max-w-xs truncate">{d.description || '—'}</td>
             </tr>
@@ -138,7 +165,12 @@
 {#if modalOpen}
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" on:click={() => modalOpen = false} role="button" tabindex="0" on:keydown={(e) => e.key === 'Escape' && (modalOpen = false)}>
     <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
-      <h2 class="text-lg font-semibold text-white mb-4">{editingId ? `Редактировать прибор #${editingId}` : 'Новый прибор'}</h2>
+      <h2 class="text-lg font-semibold text-white mb-4">
+        {editingId ? `Редактировать прибор #${editingId}` : 'Новый прибор'}
+        {#if editingIsArchived}
+          <span class="ml-2 text-sm px-2 py-0.5 bg-zinc-700 text-zinc-400 rounded">Архив</span>
+        {/if}
+      </h2>
       <form on:submit|preventDefault={save} class="space-y-4">
         {#if editingId}
           <div>
@@ -158,10 +190,17 @@
           <label class="block text-sm text-zinc-400 mb-1">Описание</label>
           <textarea bind:value={form.description} rows="2" placeholder="Опционально" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
         </div>
-        <div class="flex gap-2 pt-2">
+        <div class="flex flex-wrap gap-2 pt-2">
           <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Сохранить</button>
           <button type="button" on:click={() => modalOpen = false} class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600">Отмена</button>
-          {#if editingId}
+          {#if editingId !== null}
+            <button
+              type="button"
+              on:click={() => toggleArchive(editingId, editingIsArchived)}
+              class="px-4 py-2 rounded-lg text-white {editingIsArchived ? 'bg-emerald-700 hover:bg-emerald-600' : 'bg-zinc-600 hover:bg-zinc-500'}"
+            >
+              {editingIsArchived ? 'Восстановить' : 'Архивировать'}
+            </button>
             <button type="button" on:click={() => remove(editingId)} class="ml-auto px-4 py-2 bg-red-700 text-white rounded-lg hover:bg-red-600">Удалить</button>
           {/if}
         </div>

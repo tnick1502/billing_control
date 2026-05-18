@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import Device, DeviceBomVersion, DeviceBomItem
+from app.models.monthly_plan import MonthlyPlanDevice
+from app.models.order import OrderItem
 from app.schemas.common import (
     BomVersionCreate,
     BomVersionRead,
@@ -52,6 +54,8 @@ async def create_device_bom(device_id: int, data: BomVersionCreate, session: Asy
                 DeviceBomItem(
                     bom_version_id=bom.id,
                     part_id=src.part_id,
+                    sub_device_id=src.sub_device_id,
+                    sub_bom_version_id=src.sub_bom_version_id,
                     qty_per_device=src.qty_per_device,
                     scrap_rate=src.scrap_rate,
                     note=src.note,
@@ -108,6 +112,28 @@ async def delete_bom(bom_id: int, session: AsyncSession = Depends(get_db)):
     bom = result.scalar_one_or_none()
     if not bom:
         raise HTTPException(404, "BOM version not found")
+    refs: list[str] = []
+    order_count = await session.scalar(
+        select(func.count()).where(OrderItem.bom_version_id == bom_id)
+    )
+    if order_count:
+        refs.append(f"заказы ({order_count} шт.)")
+    plan_count = await session.scalar(
+        select(func.count()).where(MonthlyPlanDevice.bom_version_id == bom_id)
+    )
+    if plan_count:
+        refs.append(f"месячные планы ({plan_count} шт.)")
+    # Also check if this BOM is referenced as sub_bom_version_id in any BOM item
+    subdev_ref_count = await session.scalar(
+        select(func.count()).where(DeviceBomItem.sub_bom_version_id == bom_id)
+    )
+    if subdev_ref_count:
+        refs.append(f"спецификации подприборов ({subdev_ref_count} шт.)")
+    if refs:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Нельзя удалить спецификацию: она используется в {', '.join(refs)}.",
+        )
     await session.delete(bom)
     return None
 
@@ -120,10 +146,62 @@ async def list_bom_items(bom_id: int, session: AsyncSession = Depends(get_db)):
 
 @router.post("/bom/{bom_id}/items", response_model=BomItemRead)
 async def create_bom_item(bom_id: int, data: BomItemCreate, session: AsyncSession = Depends(get_db)):
-    result = await session.execute(select(DeviceBomVersion).where(DeviceBomVersion.id == bom_id))
-    if not result.scalar_one_or_none():
+    bom = await session.scalar(select(DeviceBomVersion).where(DeviceBomVersion.id == bom_id))
+    if not bom:
         raise HTTPException(404, "BOM version not found")
-    item = DeviceBomItem(bom_version_id=bom_id, **data.model_dump())
+
+    if data.sub_device_id is not None:
+        # Prevent self-reference: sub-device cannot be the same device as this BOM's device
+        if data.sub_device_id == bom.device_id:
+            raise HTTPException(400, "Нельзя добавить прибор в собственную спецификацию (цикл)")
+
+        # Check that the sub_device actually exists
+        sub_dev = await session.scalar(select(Device).where(Device.id == data.sub_device_id))
+        if not sub_dev:
+            raise HTTPException(404, "Подприбор не найден")
+
+        # Check for duplicate sub_device_id in this BOM
+        existing = await session.scalar(
+            select(DeviceBomItem).where(
+                DeviceBomItem.bom_version_id == bom_id,
+                DeviceBomItem.sub_device_id == data.sub_device_id,
+            )
+        )
+        if existing:
+            raise HTTPException(409, f"Подприбор уже добавлен в эту спецификацию")
+
+        # Validate sub_bom_version_id belongs to sub_device_id
+        if data.sub_bom_version_id is not None:
+            sub_bom = await session.scalar(
+                select(DeviceBomVersion).where(
+                    DeviceBomVersion.id == data.sub_bom_version_id,
+                    DeviceBomVersion.device_id == data.sub_device_id,
+                )
+            )
+            if not sub_bom:
+                raise HTTPException(400, "Указанная спецификация не принадлежит выбранному подприбору")
+
+        item = DeviceBomItem(
+            bom_version_id=bom_id,
+            part_id=None,
+            sub_device_id=data.sub_device_id,
+            sub_bom_version_id=data.sub_bom_version_id,
+            qty_per_device=data.qty_per_device,
+            scrap_rate=data.scrap_rate,
+            note=data.note,
+        )
+    else:
+        # Part item
+        item = DeviceBomItem(
+            bom_version_id=bom_id,
+            part_id=data.part_id,
+            sub_device_id=None,
+            sub_bom_version_id=None,
+            qty_per_device=data.qty_per_device,
+            scrap_rate=data.scrap_rate,
+            note=data.note,
+        )
+
     session.add(item)
     await session.flush()
     await session.refresh(item)

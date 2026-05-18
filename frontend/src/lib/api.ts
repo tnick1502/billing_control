@@ -125,10 +125,11 @@ export const api = {
     auditLogs: (limit = 200) => fetchApi<AuditLog[]>(`/admin/audit-logs?${new URLSearchParams({ limit: String(limit) })}`),
   },
   devices: {
-    list: () => fetchApi<Device[]>('/devices'),
+    list: (includeArchived = false) => fetchApi<Device[]>(`/devices${includeArchived ? '?include_archived=true' : ''}`),
     get: (id: number) => fetchApi<Device>(`/devices/${id}`),
     create: (data: DeviceCreate) => fetchApi<Device>('/devices', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: number, data: Partial<DeviceCreate>) => fetchApi<Device>(`/devices/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    archive: (id: number, is_archived: boolean) => fetchApi<Device>(`/devices/${id}/archive`, { method: 'PATCH', body: JSON.stringify({ is_archived }) }),
     delete: (id: number) => fetchApi<void>(`/devices/${id}`, { method: 'DELETE' }),
     aliases: {
       list: (deviceId: number) => fetchApi<DeviceAlias[]>(`/devices/${deviceId}/aliases`),
@@ -137,10 +138,11 @@ export const api = {
     },
   },
   parts: {
-    list: () => fetchApi<Part[]>('/parts'),
+    list: (includeArchived = false) => fetchApi<Part[]>(`/parts${includeArchived ? '?include_archived=true' : ''}`),
     get: (id: number) => fetchApi<Part>(`/parts/${id}`),
     create: (data: PartCreate) => fetchApi<Part>('/parts', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: number, data: Partial<PartCreate>) => fetchApi<Part>(`/parts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    archive: (id: number, is_archived: boolean) => fetchApi<Part>(`/parts/${id}/archive`, { method: 'PATCH', body: JSON.stringify({ is_archived }) }),
     delete: (id: number) => fetchApi<void>(`/parts/${id}`, { method: 'DELETE' }),
   },
   orders: {
@@ -190,6 +192,26 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify({ qty_delivered }),
       }),
+    partFiles: {
+      list: (planId: number, planPartId: number) =>
+        fetchApi<PlanPartFile[]>(`/monthly-plans/${planId}/parts/${planPartId}/files`),
+      upload: async (planId: number, planPartId: number, files: FileList): Promise<PlanPartFile[]> => {
+        const fd = new FormData();
+        for (let i = 0; i < files.length; i++) {
+          fd.append('files', files[i]);
+        }
+        const token = getAuthToken();
+        const res = await fetch(`${API_BASE}/monthly-plans/${planId}/parts/${planPartId}/files`, {
+          method: 'POST',
+          body: fd,
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) throw parseApiError(res, await res.text());
+        return res.json();
+      },
+      delete: (planId: number, planPartId: number, fileId: number) =>
+        fetchApi<void>(`/monthly-plans/${planId}/parts/${planPartId}/files/${fileId}`, { method: 'DELETE' }),
+    },
   },
   invoices: {
     list: () => fetchApi<Invoice[]>('/invoices'),
@@ -326,6 +348,7 @@ export interface Device {
   primary_name: string;
   model: string | null;
   description: string | null;
+  is_archived: boolean;
   created_at: string;
 }
 export interface DeviceCreate {
@@ -346,6 +369,7 @@ export interface Part {
   cipher: string | null;
   article: string | null;
   description: string | null;
+  is_archived: boolean;
   created_at: string;
 }
 export interface PartCreate {
@@ -427,13 +451,18 @@ export interface BomVersionCreate {
 export interface BomItem {
   id: number;
   bom_version_id: number;
-  part_id: number;
+  part_id: number | null;
+  sub_device_id: number | null;
+  sub_bom_version_id: number | null;
   qty_per_device: number;
   scrap_rate: string | null;
   note: string | null;
+  item_type: 'part' | 'sub_device';
 }
 export interface BomItemCreate {
-  part_id: number;
+  part_id?: number | null;
+  sub_device_id?: number | null;
+  sub_bom_version_id?: number | null;
   qty_per_device: number;
   scrap_rate?: string | null;
   note?: string | null;
@@ -480,6 +509,13 @@ export interface PartInvoiceCoverage {
   payment_date: string | null;
   qty_covered: string | null;
 }
+export interface PlanPartFile {
+  id: number;
+  filename: string;
+  content_type: string | null;
+  size_bytes: number | null;
+  uploaded_at: string;
+}
 export interface MonthlyPlanPartWithCoverage extends MonthlyPlanPart {
   has_invoice: boolean;
   invoices?: PartInvoiceCoverage[];
@@ -487,6 +523,7 @@ export interface MonthlyPlanPartWithCoverage extends MonthlyPlanPart {
   coverage_complete?: boolean;
   /** После обновления API; иначе считается по qty_delivered и qty_required */
   delivery_complete?: boolean;
+  files?: PlanPartFile[];
 }
 
 export interface InvoiceFileInfo {

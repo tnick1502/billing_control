@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import { formatQty, formatIntegerQty, formatAmount, formatDate, formatDateTime, formatFileSize } from '$lib/format';
-  import type { MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPartWithCoverage, InvoiceCreate, Invoice, PartInvoiceCoverage, InvoiceFileInfo } from '$lib/api';
+  import type { MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPartWithCoverage, InvoiceCreate, Invoice, PartInvoiceCoverage, InvoiceFileInfo, PlanPartFile } from '$lib/api';
 
   type PlanDetail = { devices: MonthlyPlanDevice[]; parts: MonthlyPlanPartWithCoverage[] };
 
@@ -20,6 +20,9 @@
   /** Черновики «поставлено» по id строки плана (monthly_plan_parts.id) */
   let deliverDraft: Record<number, string> = {};
   let savingDeliveredId: number | null = null;
+
+  let uploadingFilesPartId: number | null = null;
+  let planPartFileInputs: Record<number, HTMLInputElement> = {};
 
   let linkModalOpen = false;
   let linkPlanId: number | null = null;
@@ -417,6 +420,31 @@
       alert((e as Error).message);
     }
   }
+
+  async function uploadPlanPartFiles(planId: number, planPartId: number, files: FileList) {
+    if (!files.length) return;
+    uploadingFilesPartId = planPartId;
+    try {
+      await api.monthlyPlans.partFiles.upload(planId, planPartId, files);
+      await load({ quiet: true });
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      uploadingFilesPartId = null;
+      const inp = planPartFileInputs[planPartId];
+      if (inp) inp.value = '';
+    }
+  }
+
+  async function deletePlanPartFile(planId: number, planPartId: number, fileId: number) {
+    if (!confirm('Удалить файл?')) return;
+    try {
+      await api.monthlyPlans.partFiles.delete(planId, planPartId, fileId);
+      await load({ quiet: true });
+    } catch (e) {
+      alert((e as Error).message);
+    }
+  }
 </script>
 
 <div class="p-8">
@@ -646,6 +674,55 @@
                             </button>
                           </div>
                         {/if}
+
+                        <!-- Файлы поставки -->
+                        <div class="mt-3">
+                          {#if (p.files ?? []).length > 0}
+                            <div class="space-y-1 mb-2">
+                              {#each p.files ?? [] as f (f.id)}
+                                <div class="flex items-center gap-2 rounded bg-black/20 px-2 py-1 text-[11px]">
+                                  <div class="min-w-0 flex-1">
+                                    <div class="truncate text-zinc-200">{f.filename}</div>
+                                    <div class="text-[10px] text-zinc-500">{formatDate(f.uploaded_at)}{f.size_bytes != null ? ` · ${formatFileSize(f.size_bytes)}` : ''}</div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    on:click={() => downloadFile(f.id, f.filename)}
+                                    class="shrink-0 px-2 py-0.5 text-[10px] bg-zinc-700 rounded hover:bg-zinc-600 text-white"
+                                  >
+                                    Скачать
+                                  </button>
+                                  <button
+                                    type="button"
+                                    on:click={() => deletePlanPartFile(plan.id, p.id, f.id)}
+                                    class="shrink-0 px-1.5 py-0.5 text-[10px] bg-red-900/60 rounded hover:bg-red-800 text-red-200"
+                                    title="Удалить файл"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              {/each}
+                            </div>
+                          {/if}
+                          <input
+                            type="file"
+                            multiple
+                            class="hidden"
+                            bind:this={planPartFileInputs[p.id]}
+                            on:change={(e) => {
+                              const files = (e.currentTarget as HTMLInputElement).files;
+                              if (files?.length) uploadPlanPartFiles(plan.id, p.id, files);
+                            }}
+                          />
+                          <button
+                            type="button"
+                            disabled={uploadingFilesPartId === p.id}
+                            on:click={() => planPartFileInputs[p.id]?.click()}
+                            class="text-xs text-zinc-400 hover:text-zinc-200 underline disabled:opacity-50"
+                          >
+                            {uploadingFilesPartId === p.id ? 'Загрузка…' : '+ Добавить файлы'}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   {/each}

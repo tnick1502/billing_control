@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def decimal_to_str(v: Any) -> str:
@@ -82,7 +82,12 @@ class DeviceUpdate(BaseModel):
 
 class DeviceRead(DeviceBase):
     id: int
+    is_archived: bool
     created_at: datetime
+
+
+class DeviceArchiveUpdate(BaseModel):
+    is_archived: bool
 
 
 class DeviceAliasCreate(BaseModel):
@@ -118,9 +123,14 @@ class PartUpdate(BaseModel):
 
 class PartRead(PartBase):
     id: int
+    is_archived: bool
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: decimal_to_str})
+
+
+class PartArchiveUpdate(BaseModel):
+    is_archived: bool
 
 
 class OrderBase(BaseModel):
@@ -240,10 +250,22 @@ class BomVersionRead(BaseModel):
 
 
 class BomItemCreate(BaseModel):
-    part_id: int
+    part_id: int | None = None
+    sub_device_id: int | None = None
+    sub_bom_version_id: int | None = None
     qty_per_device: int = Field(ge=1)
     scrap_rate: Decimal | None = None
     note: str | None = None
+
+    @model_validator(mode="after")
+    def check_exactly_one(self) -> "BomItemCreate":
+        has_part = self.part_id is not None
+        has_sub = self.sub_device_id is not None
+        if has_part == has_sub:
+            raise ValueError("Укажите либо деталь (part_id), либо подприбор (sub_device_id)")
+        if self.sub_bom_version_id is not None and not has_sub:
+            raise ValueError("sub_bom_version_id можно указать только вместе с sub_device_id")
+        return self
 
 
 class BomItemUpdate(BaseModel):
@@ -255,10 +277,13 @@ class BomItemUpdate(BaseModel):
 class BomItemRead(BaseModel):
     id: int
     bom_version_id: int
-    part_id: int
+    part_id: int | None
+    sub_device_id: int | None
+    sub_bom_version_id: int | None
     qty_per_device: int
     scrap_rate: Decimal | None
     note: str | None
+    item_type: str
 
     model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: decimal_to_str})
 

@@ -1,3 +1,4 @@
+import logging
 from calendar import monthrange
 from datetime import date
 from decimal import Decimal
@@ -17,6 +18,67 @@ from app.models import (
     MonthlyPlanDevice,
     MonthlyPlanPart,
 )
+
+log = logging.getLogger(__name__)
+
+
+async def _expand_bom(
+    session: AsyncSession,
+    bom_id: int,
+    multiplier: Decimal,
+    part_totals: dict[int, Decimal],
+    bom_by_device: dict[int, "DeviceBomVersion"],
+    first_bom_by_device: dict[int, "DeviceBomVersion"],
+    ancestor_device_ids: frozenset[int],
+) -> None:
+    """Recursively expand a BOM version into a flat map of part_id → total_qty.
+
+    Sub-device items are expanded recursively. Cycle detection is done via
+    ancestor_device_ids — if a device_id is already in the ancestor chain,
+    that branch is skipped to avoid infinite recursion.
+    """
+    items_result = await session.execute(
+        select(DeviceBomItem).where(DeviceBomItem.bom_version_id == bom_id)
+    )
+    for item in items_result.scalars().all():
+        qty = Decimal(item.qty_per_device) * multiplier
+
+        if item.part_id is not None:
+            part_totals[item.part_id] = part_totals.get(item.part_id, Decimal("0")) + qty
+
+        elif item.sub_device_id is not None:
+            if item.sub_device_id in ancestor_device_ids:
+                log.warning(
+                    "monthly_plan: cycle detected — device %s already in ancestor chain %s, skipping",
+                    item.sub_device_id,
+                    ancestor_device_ids,
+                )
+                continue
+
+            # Resolve which BOM version to use for the sub-device
+            if item.sub_bom_version_id is not None:
+                sub_bom_id = item.sub_bom_version_id
+            else:
+                sub_bom = (
+                    bom_by_device.get(item.sub_device_id)
+                    or first_bom_by_device.get(item.sub_device_id)
+                )
+                if sub_bom is None:
+                    raise ValueError(
+                        f"Подприбор с ID {item.sub_device_id} не имеет спецификации. "
+                        "Создайте спецификацию для подприбора или укажите её явно в позиции."
+                    )
+                sub_bom_id = sub_bom.id
+
+            await _expand_bom(
+                session,
+                sub_bom_id,
+                qty,
+                part_totals,
+                bom_by_device,
+                first_bom_by_device,
+                ancestor_device_ids | {item.sub_device_id},
+            )
 
 
 async def generate_monthly_plan(
@@ -88,6 +150,8 @@ async def generate_monthly_plan(
         .options(selectinload(OrderItem.bom_version))
     )
     order_items = list(items_result.scalars().all())
+
+    # Build BOM resolution maps (used for both top-level devices and sub-devices)
     active_result = await session.execute(
         select(DeviceBomVersion).where(DeviceBomVersion.status == "active")
     )
@@ -130,7 +194,7 @@ async def generate_monthly_plan(
     session.add(plan)
     await session.flush()
 
-    # Create monthly_plan_devices and aggregate parts
+    # Create monthly_plan_devices and recursively aggregate parts
     part_totals: dict[int, Decimal] = {}
     for (device_id, bom_id), qty_total in device_bom_totals.items():
         session.add(
@@ -141,12 +205,16 @@ async def generate_monthly_plan(
                 bom_version_id=bom_id,
             )
         )
-        bom_items_result = await session.execute(
-            select(DeviceBomItem).where(DeviceBomItem.bom_version_id == bom_id)
+        # Recursively expand BOM (handles sub-devices at any nesting depth)
+        await _expand_bom(
+            session,
+            bom_id,
+            qty_total,
+            part_totals,
+            bom_by_device,
+            first_bom_by_device,
+            frozenset({device_id}),
         )
-        for item in bom_items_result.scalars().all():
-            qty = item.qty_per_device * qty_total
-            part_totals[item.part_id] = part_totals.get(item.part_id, Decimal("0")) + qty
 
     # Add direct part orders to part_totals
     for part_id, qty in direct_part_totals.items():

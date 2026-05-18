@@ -12,20 +12,31 @@
   let loading = true;
   let bomModalOpen = false;
   let bomForm: BomVersionCreate = { name: null, description: null, version: 1, status: 'current' };
+
+  // Item modal state
   let itemModalOpen = false;
-  let itemForm: BomItemCreate = { part_id: 0, qty_per_device: 1, note: null };
   let editingItemId: number | null = null;
+  let itemFormType: 'part' | 'sub_device' = 'part';
+  let itemQty = 1;
+  let itemNote: string | null = null;
+  // For part items
+  let selectedPartId: number | null = null;
   let partSearchQuery = '';
+  // For sub-device items
+  let subDeviceId: number | null = null;
+  let subBomVersionId: number | null = null;
+  let bomsForSubDevice: BomVersion[] = [];
+  let subDeviceSearchQuery = '';
 
   $: filteredParts = filterParts(partSearchQuery);
+  $: filteredSubDevices = filterSubDevices(subDeviceSearchQuery);
 
   onMount(load);
 
   async function load() {
     loading = true;
     try {
-      devices = await api.devices.list();
-      parts = await api.parts.list();
+      [devices, parts] = await Promise.all([api.devices.list(), api.parts.list()]);
     } catch (e) {
       console.error(e);
     } finally {
@@ -88,36 +99,86 @@
   function openAddItem() {
     if (!selectedBom) return;
     editingItemId = null;
-    itemForm = { part_id: 0, qty_per_device: 1, note: null };
+    itemFormType = 'part';
+    itemQty = 1;
+    itemNote = null;
+    selectedPartId = null;
     partSearchQuery = '';
+    subDeviceId = null;
+    subBomVersionId = null;
+    bomsForSubDevice = [];
+    subDeviceSearchQuery = '';
     itemModalOpen = true;
   }
 
   function openEditItem(item: BomItem) {
     editingItemId = item.id;
-    const q =
-      typeof item.qty_per_device === 'string' ? parseInt(item.qty_per_device, 10) : item.qty_per_device;
-    itemForm = { part_id: item.part_id, qty_per_device: Number.isFinite(q) && q >= 1 ? q : 1, note: item.note };
-    partSearchQuery = '';
+    itemFormType = item.item_type;
+    const q = typeof item.qty_per_device === 'string' ? parseInt(item.qty_per_device, 10) : item.qty_per_device;
+    itemQty = Number.isFinite(q) && q >= 1 ? q : 1;
+    itemNote = item.note;
+    if (item.item_type === 'part') {
+      selectedPartId = item.part_id;
+      partSearchQuery = item.part_id ? (partLabel(parts.find((p) => p.id === item.part_id)!) ?? '') : '';
+      subDeviceId = null;
+      subBomVersionId = null;
+      bomsForSubDevice = [];
+      subDeviceSearchQuery = '';
+    } else {
+      subDeviceId = item.sub_device_id;
+      subBomVersionId = item.sub_bom_version_id;
+      subDeviceSearchQuery = '';
+      selectedPartId = null;
+      partSearchQuery = '';
+      if (item.sub_device_id) {
+        api.bom.list(item.sub_device_id).then((list) => { bomsForSubDevice = list; }).catch(() => {});
+      }
+    }
     itemModalOpen = true;
+  }
+
+  async function onSubDeviceChange(deviceId: number | null) {
+    subDeviceId = deviceId;
+    subBomVersionId = null;
+    bomsForSubDevice = [];
+    if (deviceId) {
+      try {
+        bomsForSubDevice = await api.bom.list(deviceId);
+      } catch {
+        bomsForSubDevice = [];
+      }
+    }
   }
 
   async function saveItem() {
     if (!selectedBom) return;
-    if (!itemForm.part_id) {
-      alert('Выберите деталь');
-      return;
-    }
-    const qtyRaw = Number(itemForm.qty_per_device);
-    const qty = Math.trunc(qtyRaw);
-    if (!Number.isFinite(qtyRaw) || qty < 1) {
+    const qty = Math.trunc(Number(itemQty));
+    if (!Number.isFinite(qty) || qty < 1) {
       alert('Количество на прибор — целое число не меньше 1');
       return;
     }
-    const payload = { ...itemForm, qty_per_device: qty };
+    let payload: BomItemCreate;
+    if (itemFormType === 'part') {
+      if (!selectedPartId) {
+        alert('Выберите деталь');
+        return;
+      }
+      payload = { part_id: selectedPartId, qty_per_device: qty, note: itemNote };
+    } else {
+      if (!subDeviceId) {
+        alert('Выберите подприбор');
+        return;
+      }
+      payload = {
+        sub_device_id: subDeviceId,
+        sub_bom_version_id: subBomVersionId ?? null,
+        qty_per_device: qty,
+        note: itemNote,
+      };
+    }
     try {
       if (editingItemId) {
-        await api.bom.items.update(selectedBom.id, editingItemId, payload);
+        await api.bom.items.update(selectedBom.id, editingItemId, { qty_per_device: qty, note: itemNote });
       } else {
         await api.bom.items.create(selectedBom.id, payload);
       }
@@ -151,14 +212,15 @@
     return [part.name, part.article, part.cipher, part.description].filter(Boolean).join(' ').toLowerCase();
   }
 
-  function partLabel(part: Part) {
+  function partLabel(part: Part | undefined) {
+    if (!part) return '';
     return [part.name, part.article ? `арт. ${part.article}` : null, part.cipher ? `шифр ${part.cipher}` : null]
       .filter(Boolean)
       .join(' · ');
   }
 
   function selectedPartLabel() {
-    const part = parts.find((p) => p.id === itemForm.part_id);
+    const part = parts.find((p) => p.id === selectedPartId);
     return part ? partLabel(part) : 'Деталь не выбрана';
   }
 
@@ -169,13 +231,34 @@
   }
 
   function selectPart(part: Part) {
-    itemForm = { ...itemForm, part_id: part.id };
+    selectedPartId = part.id;
     partSearchQuery = partLabel(part);
   }
 
-  function partName(id: number) {
-    const part = parts.find((p) => p.id === id);
-    return part ? partLabel(part) : id;
+  function filterSubDevices(query: string) {
+    const q = query.trim().toLowerCase();
+    const available = devices.filter((d) => d.id !== selectedDevice?.id);
+    if (!q) return available;
+    return available.filter((d) =>
+      `${d.primary_name} ${d.model ?? ''}`.toLowerCase().includes(q)
+    );
+  }
+
+  function deviceName(id: number | null) {
+    if (!id) return '—';
+    return devices.find((d) => d.id === id)?.primary_name ?? String(id);
+  }
+
+  function bomVersionLabel(bomId: number | null) {
+    if (!bomId) return 'Авто (активная)';
+    const b = bomsForSubDevice.find((bv) => bv.id === bomId);
+    return b ? `v${b.version}${b.name ? ` · ${b.name}` : ''} (${statusLabel(b.status)})` : `BOM #${bomId}`;
+  }
+
+  function itemRowLabel(item: BomItem): string {
+    if (item.item_type === 'sub_device') return deviceName(item.sub_device_id);
+    if (item.part_id) return partLabel(parts.find((p) => p.id === item.part_id)) || String(item.part_id);
+    return '—';
   }
 
   const BOM_STATUSES: { value: string; label: string }[] = [
@@ -246,11 +329,12 @@
 
         {#if selectedBom}
           <div>
-            <button on:click={openAddItem} class="mb-4 px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 text-sm">Добавить деталь</button>
+            <button on:click={openAddItem} class="mb-4 px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 text-sm">+ Добавить компонент</button>
             <table class="w-full rounded-xl border border-zinc-700 overflow-hidden">
               <thead class="bg-surface-800 text-zinc-400 text-left">
                 <tr>
-                  <th class="px-4 py-3 font-medium">Деталь</th>
+                  <th class="px-4 py-3 font-medium">Компонент</th>
+                  <th class="px-4 py-3 font-medium">Тип</th>
                   <th class="px-4 py-3 font-medium">Кол-во на прибор</th>
                 </tr>
               </thead>
@@ -263,10 +347,20 @@
                     on:click={() => openEditItem(i)}
                     on:keydown={(event) => handleItemRowKeydown(event, i)}
                   >
-                    <td class="px-4 py-3">{partName(i.part_id)}</td>
+                    <td class="px-4 py-3">{itemRowLabel(i)}</td>
+                    <td class="px-4 py-3">
+                      {#if i.item_type === 'sub_device'}
+                        <span class="px-2 py-0.5 text-xs rounded bg-blue-600/30 text-blue-300 border border-blue-500/30">Подприбор</span>
+                      {:else}
+                        <span class="px-2 py-0.5 text-xs rounded bg-zinc-700 text-zinc-400">Деталь</span>
+                      {/if}
+                    </td>
                     <td class="px-4 py-3 font-mono">{i.qty_per_device}</td>
                   </tr>
                 {/each}
+                {#if bomItems.length === 0}
+                  <tr><td colspan="3" class="px-4 py-6 text-center text-zinc-500">Нет компонентов. Добавьте деталь или подприбор.</td></tr>
+                {/if}
               </tbody>
             </table>
           </div>
@@ -314,49 +408,143 @@
 
 {#if itemModalOpen}
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" on:click={() => itemModalOpen = false} role="button" tabindex="0">
-    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
-      <h2 class="text-lg font-semibold text-white mb-4">{editingItemId ? 'Редактировать' : 'Добавить'} позицию</h2>
+    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700 max-h-[90vh] overflow-y-auto" on:click|stopPropagation role="dialog">
+      <h2 class="text-lg font-semibold text-white mb-4">{editingItemId ? 'Редактировать' : 'Добавить'} компонент</h2>
       <form on:submit|preventDefault={saveItem} class="space-y-4">
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Деталь</label>
-          <input
-            type="search"
-            bind:value={partSearchQuery}
-            placeholder="Введите название, артикул, шифр или описание"
-            class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
-          />
-          <div class="mt-2 rounded-lg border border-zinc-700 bg-zinc-950/70">
-            <div class="border-b border-zinc-800 px-3 py-2 text-xs text-zinc-400">
-              Выбрано: <span class="text-zinc-100">{selectedPartLabel()}</span>
-            </div>
-            <div class="max-h-56 overflow-y-auto p-1">
-              {#if filteredParts.length === 0}
-                <div class="px-3 py-2 text-sm text-zinc-500">Детали не найдены</div>
-              {:else}
-                {#each filteredParts as p}
-                  <button
-                    type="button"
-                    on:click={() => selectPart(p)}
-                    class="block w-full rounded-md px-3 py-2 text-left text-sm {itemForm.part_id === p.id ? 'bg-amber-500/20 text-amber-200' : 'text-zinc-200 hover:bg-zinc-800'}"
-                  >
-                    <div>{p.name}</div>
-                    <div class="text-xs text-zinc-500">
-                      {p.article ? `арт. ${p.article}` : 'без артикула'}{p.cipher ? ` · шифр ${p.cipher}` : ''}
-                    </div>
-                  </button>
-                {/each}
-              {/if}
+
+        <!-- Type toggle — only visible when creating a new item -->
+        {#if !editingItemId}
+          <div>
+            <label class="block text-sm text-zinc-400 mb-2">Тип компонента</label>
+            <div class="flex gap-2">
+              <button
+                type="button"
+                on:click={() => { itemFormType = 'part'; }}
+                class="flex-1 py-2 rounded-lg text-sm border {itemFormType === 'part' ? 'bg-amber-500 text-black border-amber-500 font-medium' : 'bg-zinc-800 text-zinc-300 border-zinc-600 hover:bg-zinc-700'}"
+              >
+                Деталь
+              </button>
+              <button
+                type="button"
+                on:click={() => { itemFormType = 'sub_device'; }}
+                class="flex-1 py-2 rounded-lg text-sm border {itemFormType === 'sub_device' ? 'bg-blue-600 text-white border-blue-500 font-medium' : 'bg-zinc-800 text-zinc-300 border-zinc-600 hover:bg-zinc-700'}"
+              >
+                Подприбор
+              </button>
             </div>
           </div>
-        </div>
+        {/if}
+
+        {#if itemFormType === 'part'}
+          <!-- Part selector -->
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">Деталь <span class="text-red-400">*</span></label>
+            <input
+              type="search"
+              bind:value={partSearchQuery}
+              placeholder="Введите название, артикул, шифр или описание"
+              class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
+              disabled={!!editingItemId}
+            />
+            {#if !editingItemId}
+              <div class="mt-2 rounded-lg border border-zinc-700 bg-zinc-950/70">
+                <div class="border-b border-zinc-800 px-3 py-2 text-xs text-zinc-400">
+                  Выбрано: <span class="text-zinc-100">{selectedPartLabel()}</span>
+                </div>
+                <div class="max-h-48 overflow-y-auto p-1">
+                  {#if filteredParts.length === 0}
+                    <div class="px-3 py-2 text-sm text-zinc-500">Детали не найдены</div>
+                  {:else}
+                    {#each filteredParts as p}
+                      <button
+                        type="button"
+                        on:click={() => selectPart(p)}
+                        class="block w-full rounded-md px-3 py-2 text-left text-sm {selectedPartId === p.id ? 'bg-amber-500/20 text-amber-200' : 'text-zinc-200 hover:bg-zinc-800'}"
+                      >
+                        <div>{p.name}</div>
+                        <div class="text-xs text-zinc-500">
+                          {p.article ? `арт. ${p.article}` : 'без артикула'}{p.cipher ? ` · шифр ${p.cipher}` : ''}
+                        </div>
+                      </button>
+                    {/each}
+                  {/if}
+                </div>
+              </div>
+            {:else}
+              <div class="mt-1 text-sm text-zinc-300">{selectedPartLabel()}</div>
+            {/if}
+          </div>
+
+        {:else}
+          <!-- Sub-device selector -->
+          <div>
+            <label class="block text-sm text-zinc-400 mb-1">Подприбор <span class="text-red-400">*</span></label>
+            {#if !editingItemId}
+              <input
+                type="search"
+                bind:value={subDeviceSearchQuery}
+                placeholder="Поиск по названию или модели"
+                class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white mb-2"
+              />
+              <div class="rounded-lg border border-zinc-700 bg-zinc-950/70">
+                <div class="border-b border-zinc-800 px-3 py-2 text-xs text-zinc-400">
+                  Выбрано: <span class="text-zinc-100">{subDeviceId ? deviceName(subDeviceId) : 'Подприбор не выбран'}</span>
+                </div>
+                <div class="max-h-48 overflow-y-auto p-1">
+                  {#if filteredSubDevices.length === 0}
+                    <div class="px-3 py-2 text-sm text-zinc-500">Приборы не найдены</div>
+                  {:else}
+                    {#each filteredSubDevices as d}
+                      <button
+                        type="button"
+                        on:click={() => onSubDeviceChange(d.id)}
+                        class="block w-full rounded-md px-3 py-2 text-left text-sm {subDeviceId === d.id ? 'bg-blue-600/20 text-blue-200' : 'text-zinc-200 hover:bg-zinc-800'}"
+                      >
+                        <div>{d.primary_name}</div>
+                        {#if d.model}<div class="text-xs text-zinc-500">{d.model}</div>{/if}
+                      </button>
+                    {/each}
+                  {/if}
+                </div>
+              </div>
+            {:else}
+              <div class="px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-zinc-300 text-sm">{deviceName(subDeviceId)}</div>
+            {/if}
+          </div>
+
+          <!-- Sub-device BOM version -->
+          {#if subDeviceId || editingItemId}
+            <div>
+              <label class="block text-sm text-zinc-400 mb-1">Спецификация подприбора</label>
+              <select
+                bind:value={subBomVersionId}
+                class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
+                disabled={!!editingItemId}
+              >
+                <option value={null}>Авто (активная на момент генерации плана)</option>
+                {#each bomsForSubDevice as bv}
+                  <option value={bv.id}>v{bv.version}{bv.name ? ` · ${bv.name}` : ''} ({statusLabel(bv.status)})</option>
+                {/each}
+              </select>
+              <p class="text-xs text-zinc-500 mt-1">
+                «Авто» — при генерации плана будет использована активная спецификация подприбора на тот момент
+              </p>
+            </div>
+          {/if}
+        {/if}
+
+        <!-- Qty -->
         <div>
-          <label class="block text-sm text-zinc-400 mb-1">Кол-во на прибор</label>
-          <input type="number" step="1" min="1" bind:value={itemForm.qty_per_device} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
+          <label class="block text-sm text-zinc-400 mb-1">Кол-во на прибор <span class="text-red-400">*</span></label>
+          <input type="number" step="1" min="1" bind:value={itemQty} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required />
         </div>
+
+        <!-- Note -->
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Примечание</label>
-          <textarea bind:value={itemForm.note} rows="2" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+          <textarea bind:value={itemNote} rows="2" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
         </div>
+
         <div class="flex flex-wrap items-center justify-between gap-2 pt-2">
           <div class="flex gap-2">
             <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Сохранить</button>

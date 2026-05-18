@@ -15,3 +15,4 @@ docker system prune -af --volumes
 docker builder prune -af
 
 docker compose up -d --build --force-recreate
+docker compose logs -f backend frontend

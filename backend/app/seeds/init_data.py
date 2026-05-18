@@ -226,6 +226,55 @@ async def generate_test_data(session: AsyncSession) -> None:
     session.add_all(bulk_order_items + bulk_part_items)
     await session.flush()
 
+    # --- Composite device demo ---
+    # New parts used only in the composite device
+    p8 = Part(name="Модуль интерфейса", cipher="IF-001", article="ART-1008", description="RS-485/RS-232")
+    p9 = Part(name="Реле защиты", cipher="RZ-24V", article="ART-1009", description="24В защитное")
+    session.add_all([p8, p9])
+    await session.flush()
+
+    # Composite device: Контроллер КТ-200 (contains sub-devices d1 and d3 plus a direct part)
+    d4 = Device(primary_name="Контроллер КТ-200", model="KT-200", description="Составной контроллер — включает подприборы")
+    session.add(d4)
+    await session.flush()
+
+    bom4 = DeviceBomVersion(
+        device_id=d4.id, name="Спецификация v1",
+        description="Состав: 2× Датчик Т-100 + 1× Блок питания БП-12 + Модуль интерфейса",
+        version=1, status="active",
+    )
+    session.add(bom4)
+    await session.flush()
+
+    session.add_all([
+        # 2× sub-device Датчик Т-100 (d1, pinned to bom1)
+        DeviceBomItem(bom_version_id=bom4.id, sub_device_id=d1.id, sub_bom_version_id=bom1.id, qty_per_device=2),
+        # 1× sub-device Блок питания БП-12 (d3, pinned to bom3)
+        DeviceBomItem(bom_version_id=bom4.id, sub_device_id=d3.id, sub_bom_version_id=bom3.id, qty_per_device=1),
+        # 1× direct part Модуль интерфейса
+        DeviceBomItem(bom_version_id=bom4.id, part_id=p8.id, qty_per_device=1),
+    ])
+    await session.flush()
+
+    # Order for March 2026 with 3× KT-200
+    o_composite = Order(
+        order_date=date(2026, 3, 10),
+        customer="АО Прогресс",
+        contract_no="Д-2026-C01",
+        description="Март: составной контроллер КТ-200 (демо иерархического BOM)",
+    )
+    session.add(o_composite)
+    await session.flush()
+    session.add(OrderItem(
+        order_id=o_composite.id,
+        device_id=d4.id,
+        bom_version_id=bom4.id,
+        qty=Decimal("3"),
+        price=Decimal("9500.00"),
+    ))
+    await session.flush()
+    # --- end composite device demo ---
+
     # Monthly plans (March and April 2026) generated from the larger order set.
     plan = await generate_monthly_plan(session, date(2026, 3, 1), replace=True)
     april_plan = await generate_monthly_plan(session, date(2026, 4, 1), replace=True)

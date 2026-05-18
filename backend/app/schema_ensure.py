@@ -136,6 +136,11 @@ _PG_STATEMENTS = [
     "ALTER TABLE parts DROP COLUMN IF EXISTS uom",
     "ALTER TABLE monthly_plan_parts ADD COLUMN IF NOT EXISTS qty_delivered NUMERIC(18,6) NOT NULL DEFAULT 0",
     "ALTER TABLE device_bom_items ALTER COLUMN qty_per_device TYPE INTEGER USING ROUND(qty_per_device)::integer",
+    "ALTER TABLE parts ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT false",
+    "ALTER TABLE devices ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT false",
+    "ALTER TABLE device_bom_items ALTER COLUMN part_id DROP NOT NULL",
+    "ALTER TABLE device_bom_items ADD COLUMN IF NOT EXISTS sub_device_id INTEGER REFERENCES devices(id) ON DELETE CASCADE",
+    "ALTER TABLE device_bom_items ADD COLUMN IF NOT EXISTS sub_bom_version_id INTEGER REFERENCES device_bom_versions(id) ON DELETE SET NULL",
 ]
 
 # Вложения: таблица байтов и приведение старых колонок files к текущей модели (если были)
@@ -156,6 +161,33 @@ _PG_FILES_BYTEA_MIGRATION = [
 ]
 
 
+async def _ensure_bom_subdev_unique(conn) -> None:
+    """Add UNIQUE(bom_version_id, sub_device_id) to device_bom_items if missing."""
+    result = await conn.execute(
+        text(
+            """
+            SELECT 1 FROM pg_constraint c
+            JOIN pg_class r ON r.oid = c.conrelid
+            WHERE r.relname = 'device_bom_items'
+              AND c.conname = 'uq_device_bom_items_bom_subdev'
+            """
+        )
+    )
+    if result.fetchone():
+        return
+    try:
+        await conn.execute(
+            text(
+                "ALTER TABLE device_bom_items "
+                "ADD CONSTRAINT uq_device_bom_items_bom_subdev "
+                "UNIQUE (bom_version_id, sub_device_id)"
+            )
+        )
+        log.info("schema_ensure: device_bom_items — added UNIQUE(bom_version_id, sub_device_id)")
+    except Exception as e:
+        log.warning("schema_ensure: uq_device_bom_items_bom_subdev — %s", e)
+
+
 async def ensure_schema() -> None:
     dialect = engine.dialect.name
     if dialect not in ("postgresql", "sqlite"):
@@ -173,3 +205,4 @@ async def ensure_schema() -> None:
                 log.warning("schema_ensure: %s — %s", sql, e)
         if dialect == "postgresql":
             await _ensure_invoice_files_composite_pk_postgresql(conn)
+            await _ensure_bom_subdev_unique(conn)
