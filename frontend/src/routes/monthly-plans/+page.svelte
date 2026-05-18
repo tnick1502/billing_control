@@ -445,6 +445,11 @@
       alert((e as Error).message);
     }
   }
+
+  function handlePlanPartFileInput(planId: number, planPartId: number, e: Event) {
+    const files = (e.currentTarget as HTMLInputElement).files;
+    if (files?.length) uploadPlanPartFiles(planId, planPartId, files);
+  }
 </script>
 
 <div class="p-8">
@@ -709,10 +714,7 @@
                             multiple
                             class="hidden"
                             bind:this={planPartFileInputs[p.id]}
-                            on:change={(e) => {
-                              const files = (e.currentTarget as HTMLInputElement).files;
-                              if (files?.length) uploadPlanPartFiles(plan.id, p.id, files);
-                            }}
+                            on:change={(e) => handlePlanPartFileInput(plan.id, p.id, e)}
                           />
                           <button
                             type="button"
