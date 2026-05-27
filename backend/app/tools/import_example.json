@@ -1,0 +1,60 @@
+{
+  "format": "billing_control.bulk_import",
+  "version": 1,
+  "devices": [
+    {
+      "primary_name": "Датчик температуры Т-100",
+      "model": "T-100",
+      "description": "Промышленный датчик температуры",
+      "bom": {
+        "name": "Спецификация v1",
+        "version": 1,
+        "status": "active",
+        "description": "Базовая конфигурация",
+        "items": [
+          {
+            "part": { "name": "Корпус пластиковый", "cipher": "KP-001", "article": "ART-1001", "description": "Ударопрочный корпус" },
+            "qty_per_device": 1,
+            "scrap_rate": "0.02"
+          },
+          {
+            "part": { "name": "Плата печатная", "cipher": "PCB-001", "article": "ART-1002" },
+            "qty_per_device": 1
+          },
+          {
+            "part": { "name": "Резистор 10кОм", "cipher": "R-10K", "article": "ART-1003" },
+            "qty_per_device": 5,
+            "note": "Точность 1%"
+          }
+        ]
+      }
+    },
+    {
+      "primary_name": "Блок питания БП-12",
+      "model": "BP-12",
+      "bom": {
+        "version": 1,
+        "status": "active",
+        "items": [
+          { "part": { "name": "Корпус пластиковый", "article": "ART-1001" }, "qty_per_device": 1 },
+          { "part": { "name": "Трансформатор 12В", "cipher": "TR-12V", "article": "ART-1007" }, "qty_per_device": 1 }
+        ]
+      }
+    },
+    {
+      "primary_name": "Контроллер КТ-200",
+      "model": "KT-200",
+      "description": "Составной прибор — содержит подприборы",
+      "bom": {
+        "version": 1,
+        "status": "active",
+        "items": [
+          { "sub_device": "Датчик температуры Т-100", "sub_bom_version": 1, "qty_per_device": 2 },
+          { "sub_device": "Блок питания БП-12", "sub_bom_version": 1, "qty_per_device": 1 },
+          { "part": { "name": "Модуль интерфейса", "cipher": "IF-001", "article": "ART-1008" }, "qty_per_device": 1 }
+        ]
+      }
+    }
+  ],
+  "parts": []
+}

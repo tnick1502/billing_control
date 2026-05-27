@@ -257,6 +257,26 @@ export const api = {
       delete: (invoiceId: number, linkId: number) => fetchApi<void>(`/invoices/${invoiceId}/parts/${linkId}`, { method: 'DELETE' }),
     },
   },
+  imports: {
+    uploadBom: async (
+      file: File,
+      opts?: { dryRun?: boolean; updateExisting?: boolean }
+    ): Promise<ImportResult> => {
+      const q = new URLSearchParams();
+      if (opts?.dryRun) q.set('dry_run', 'true');
+      if (opts?.updateExisting) q.set('update_existing', 'true');
+      const fd = new FormData();
+      fd.append('file', file);
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}/imports/bom?${q}`, {
+        method: 'POST',
+        body: fd,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw parseApiError(res, await res.text());
+      return res.json() as Promise<ImportResult>;
+    },
+  },
   files: {
     downloadBlob: async (fileId: number): Promise<Blob> => {
       const token = getAuthToken();
@@ -524,6 +544,20 @@ export interface MonthlyPlanPartWithCoverage extends MonthlyPlanPart {
   /** После обновления API; иначе считается по qty_delivered и qty_required */
   delivery_complete?: boolean;
   files?: PlanPartFile[];
+}
+
+export interface ImportResult {
+  dry_run: boolean;
+  parts_created: number;
+  parts_reused: number;
+  devices_created: number;
+  devices_reused: number;
+  boms_created: number;
+  boms_updated: number;
+  boms_skipped: number;
+  items_created: number;
+  items_skipped: number;
+  warnings: string[];
 }
 
 export interface InvoiceFileInfo {

@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.auth import auth_middleware, ensure_default_users
 from app.config import settings
-from app.api import auth, bom, devices, files, invoices, monthly_plans, orders, parts, stats
+from app.api import auth, bom, devices, files, imports, invoices, monthly_plans, orders, parts, stats
 from app.database import Base, async_session_maker, engine, wipe_application_schema
 from app.schema_ensure import ensure_schema
 from app.seeds.init_data import seed_database
@@ -105,6 +105,7 @@ app.include_router(bom.router)
 app.include_router(monthly_plans.router)
 app.include_router(invoices.router)
 app.include_router(files.router)
+app.include_router(imports.router)
 app.include_router(stats.router)
 
 
