@@ -5,26 +5,56 @@
     {
       "primary_name": "Датчик температуры Т-100",
       "model": "T-100",
-      "description": "Промышленный датчик температуры",
+      "description": "Промышленный датчик температуры, диапазон -50..+150°C",
       "bom": {
         "name": "Спецификация v1",
         "version": 1,
         "status": "active",
-        "description": "Базовая конфигурация",
+        "description": "Базовая конфигурация изделия Т-100",
         "items": [
           {
-            "part": { "name": "Корпус пластиковый", "cipher": "KP-001", "article": "ART-1001", "description": "Ударопрочный корпус" },
+            "part": {
+              "name": "Корпус пластиковый",
+              "cipher": "АБВГ.301261.001",
+              "article": "ART-1001",
+              "description": "Ударопрочный ABS-пластик, IP65"
+            },
             "qty_per_device": 1,
-            "scrap_rate": "0.02"
+            "scrap_rate": "0.02",
+            "note": "Цвет серый RAL 7035"
           },
           {
-            "part": { "name": "Плата печатная", "cipher": "PCB-001", "article": "ART-1002" },
-            "qty_per_device": 1
+            "part": {
+              "name": "Плата печатная основная",
+              "cipher": "АБВГ.687243.002",
+              "article": "ART-1002",
+              "description": "FR-4, 2 слоя, 1.5 мм"
+            },
+            "qty_per_device": 1,
+            "scrap_rate": "0.01",
+            "note": null
           },
           {
-            "part": { "name": "Резистор 10кОм", "cipher": "R-10K", "article": "ART-1003" },
+            "part": {
+              "name": "Резистор 10 кОм",
+              "cipher": "Р1-12-0.125-10к",
+              "article": "ART-1003",
+              "description": "Точность 1%, 0.125 Вт"
+            },
             "qty_per_device": 5,
-            "note": "Точность 1%"
+            "scrap_rate": "0.05",
+            "note": "Тип монтажа SMD 0805"
+          },
+          {
+            "part": {
+              "name": "Термопара тип K",
+              "cipher": "ТХА-0001",
+              "article": "ART-1005",
+              "description": "Хромель-алюмель, класс 1"
+            },
+            "qty_per_device": 1,
+            "scrap_rate": "0",
+            "note": null
           }
         ]
       }
@@ -32,29 +62,81 @@
     {
       "primary_name": "Блок питания БП-12",
       "model": "BP-12",
+      "description": "Блок питания 12 В, 5 Вт",
       "bom": {
+        "name": "Спецификация v1",
         "version": 1,
         "status": "active",
+        "description": "Стандартная комплектация БП-12",
         "items": [
-          { "part": { "name": "Корпус пластиковый", "article": "ART-1001" }, "qty_per_device": 1 },
-          { "part": { "name": "Трансформатор 12В", "cipher": "TR-12V", "article": "ART-1007" }, "qty_per_device": 1 }
+          {
+            "part": {
+              "name": "Корпус пластиковый",
+              "cipher": "АБВГ.301261.001",
+              "article": "ART-1001",
+              "description": "Ударопрочный ABS-пластик, IP65"
+            },
+            "qty_per_device": 1,
+            "scrap_rate": "0.02",
+            "note": "Та же деталь, что у Т-100 — будет переиспользована"
+          },
+          {
+            "part": {
+              "name": "Трансформатор 12В",
+              "cipher": "ТП-12-5",
+              "article": "ART-1007",
+              "description": "Первичная 220 В, вторичная 12 В, 5 Вт"
+            },
+            "qty_per_device": 1,
+            "scrap_rate": "0.01",
+            "note": null
+          }
         ]
       }
     },
     {
       "primary_name": "Контроллер КТ-200",
       "model": "KT-200",
-      "description": "Составной прибор — содержит подприборы",
+      "description": "Составной прибор: содержит подприборы и собственные детали",
       "bom": {
+        "name": "Спецификация v1",
         "version": 1,
         "status": "active",
+        "description": "Состав: 2× Датчик Т-100 + 1× Блок питания БП-12 + Модуль интерфейса",
         "items": [
-          { "sub_device": "Датчик температуры Т-100", "sub_bom_version": 1, "qty_per_device": 2 },
-          { "sub_device": "Блок питания БП-12", "sub_bom_version": 1, "qty_per_device": 1 },
-          { "part": { "name": "Модуль интерфейса", "cipher": "IF-001", "article": "ART-1008" }, "qty_per_device": 1 }
+          {
+            "sub_device": "Датчик температуры Т-100",
+            "sub_bom_version": 1,
+            "qty_per_device": 2,
+            "note": "Подприбор в сборе по спецификации v1"
+          },
+          {
+            "sub_device": "Блок питания БП-12",
+            "sub_bom_version": 1,
+            "qty_per_device": 1,
+            "note": "Подприбор в сборе по спецификации v1"
+          },
+          {
+            "part": {
+              "name": "Модуль интерфейса",
+              "cipher": "АБВГ.468332.008",
+              "article": "ART-1008",
+              "description": "RS-485 / RS-232, гальваническая развязка"
+            },
+            "qty_per_device": 1,
+            "scrap_rate": "0",
+            "note": null
+          }
         ]
       }
     }
   ],
-  "parts": []
+  "parts": [
+    {
+      "name": "Конденсатор 100 мкФ",
+      "cipher": "К50-35-100мкФ-25В",
+      "article": "ART-1004",
+      "description": "Электролитический, 25 В, отдельная деталь без привязки к прибору"
+    }
+  ]
 }
