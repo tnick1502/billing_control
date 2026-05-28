@@ -135,8 +135,8 @@
           role="group"
           aria-label="Финансы"
         >
-          <a href="/orders" class={navClass('/orders', $page.url.pathname)}>Заказы</a>
-          <a href="/invoices" class={navClass('/invoices', $page.url.pathname)}>Счета</a>
+          <a href="/orders" class={navClass('/orders', $page.url.pathname)}>Заказы клиентов</a>
+          <a href="/invoices" class={navClass('/invoices', $page.url.pathname)}>Счета от поставщиков</a>
           <a href="/statistics" class={navClass('/statistics', $page.url.pathname)}>Статистика</a>
         </div>
       </div>
