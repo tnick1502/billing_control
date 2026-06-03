@@ -21,7 +21,7 @@ def _clean_text(value: str | None) -> str | None:
 
 
 def _normalize_part_payload(data: dict) -> dict:
-    for key in ("name", "cipher", "article", "description"):
+    for key in ("name", "cipher", "article", "part_type", "description"):
         if key in data:
             data[key] = _clean_text(data[key])
     return data
@@ -89,6 +89,17 @@ async def list_parts(
         q = q.where(Part.is_archived == False)  # noqa: E712
     result = await session.execute(q)
     return result.scalars().all()
+
+
+@router.get("/types", response_model=list[str])
+async def list_part_types(session: AsyncSession = Depends(get_db)):
+    result = await session.execute(
+        select(Part.part_type)
+        .where(Part.part_type.is_not(None), Part.is_archived == False)  # noqa: E712
+        .distinct()
+        .order_by(Part.part_type)
+    )
+    return [row for row in result.scalars().all() if row]
 
 
 @router.post("", response_model=PartRead)

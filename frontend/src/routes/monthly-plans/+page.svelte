@@ -6,11 +6,34 @@
 
   type PlanDetail = { devices: MonthlyPlanDevice[]; parts: MonthlyPlanPartWithCoverage[] };
 
+  const NO_TYPE_LABEL = 'Без типа';
+  const PART_GROUPS_STORAGE_KEY = 'monthly-plans:expandedPartGroups';
+
   let plans: MonthlyPlan[] = [];
   let plansDetail: Record<number, PlanDetail> = {};
   let devices: { id: number; primary_name: string }[] = [];
-  let parts: { id: number; name: string }[] = [];
+  let parts: { id: number; name: string; part_type: string | null }[] = [];
   let invoices: Invoice[] = [];
+  let expandedPartGroups: Record<string, boolean> = loadExpandedPartGroups();
+
+  function loadExpandedPartGroups(): Record<string, boolean> {
+    if (typeof localStorage === 'undefined') return {};
+    try {
+      const raw = localStorage.getItem(PART_GROUPS_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveExpandedPartGroups() {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem(PART_GROUPS_STORAGE_KEY, JSON.stringify(expandedPartGroups));
+    } catch {
+      /* ignore */
+    }
+  }
   let loading = true;
   let loadError = '';
   let generateModalOpen = false;
@@ -78,7 +101,7 @@
         api.invoices.list(),
       ]);
       devices = devs.map((d) => ({ id: d.id, primary_name: d.primary_name }));
-      parts = pts.map((x) => ({ id: x.id, name: x.name }));
+      parts = pts.map((x) => ({ id: x.id, name: x.name, part_type: x.part_type }));
       invoices = invs;
 
       for (const p of list) {
@@ -166,6 +189,41 @@
   }
   function partId(id: number) {
     return parts.find((p) => p.id === id)?.id ?? id;
+  }
+  function partTypeOf(id: number): string {
+    const t = (parts.find((p) => p.id === id)?.part_type ?? '').trim();
+    return t || NO_TYPE_LABEL;
+  }
+
+  function groupPlanParts(items: MonthlyPlanPartWithCoverage[]): Record<string, MonthlyPlanPartWithCoverage[]> {
+    const groups: Record<string, MonthlyPlanPartWithCoverage[]> = {};
+    for (const p of items) {
+      const key = partTypeOf(p.part_id);
+      (groups[key] ??= []).push(p);
+    }
+    return groups;
+  }
+
+  function comparePartGroupKeys(a: string, b: string) {
+    if (a === NO_TYPE_LABEL) return 1;
+    if (b === NO_TYPE_LABEL) return -1;
+    return a.localeCompare(b, 'ru');
+  }
+
+  function isPartGroupExpanded(key: string): boolean {
+    return expandedPartGroups[key] !== false;
+  }
+
+  function togglePartGroup(key: string) {
+    expandedPartGroups = { ...expandedPartGroups, [key]: !isPartGroupExpanded(key) };
+    saveExpandedPartGroups();
+  }
+
+  function handlePartGroupKeydown(event: KeyboardEvent, key: string) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      togglePartGroup(key);
+    }
   }
 
   function deliveryOk(p: MonthlyPlanPartWithCoverage) {
@@ -501,6 +559,8 @@
           </div>
 
           {#if expanded && data}
+            {@const partGroups = groupPlanParts(data.parts ?? [])}
+            {@const partGroupKeys = Object.keys(partGroups).sort(comparePartGroupKeys)}
             <div class="p-6">
               <h3 class="text-sm font-medium text-zinc-400 mb-2">Приборы</h3>
               <table class="w-full mb-6 rounded-xl border border-zinc-700 overflow-hidden">
@@ -523,8 +583,22 @@
               </table>
 
               <h3 class="text-sm font-medium text-zinc-400 mb-2">Детали</h3>
-              <table class="w-full rounded-xl border border-zinc-700 overflow-hidden">
-                <thead class="bg-zinc-800 text-zinc-400 text-left">
+              <div class="space-y-3">
+              {#each partGroupKeys as groupKey (groupKey)}
+                <div class="overflow-hidden rounded-xl border border-zinc-700">
+                  <button
+                    type="button"
+                    on:click={() => togglePartGroup(groupKey)}
+                    on:keydown={(e) => handlePartGroupKeydown(e, groupKey)}
+                    class="flex w-full items-center gap-2 bg-zinc-800 px-4 py-2 text-left hover:bg-zinc-700/80"
+                  >
+                    <span class="text-zinc-400 text-xs">{isPartGroupExpanded(groupKey) ? '▾' : '▸'}</span>
+                    <span class="font-medium text-white text-sm">{groupKey}</span>
+                    <span class="text-xs text-zinc-400">({partGroups[groupKey].length})</span>
+                  </button>
+                  {#if isPartGroupExpanded(groupKey)}
+              <table class="w-full">
+                <thead class="bg-zinc-900 text-zinc-400 text-left">
                   <tr>
                     <th class="px-4 py-3 font-medium">ID</th>
                     <th class="px-4 py-3 font-medium">Деталь</th>
@@ -534,7 +608,7 @@
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-zinc-800">
-                  {#each data.parts ?? [] as p (p.id)}
+                  {#each partGroups[groupKey] as p (p.id)}
                     <tr class="hover:bg-zinc-800/30">
                       <td class="px-4 py-3 font-mono text-sm align-top">{partId(p.part_id) ?? '—'}</td>
                       <td class="px-4 py-3 align-top">{partName(p.part_id)}</td>
@@ -730,6 +804,10 @@
                   {/each}
                 </tbody>
               </table>
+                  {/if}
+                </div>
+              {/each}
+              </div>
             </div>
           {/if}
         </div>

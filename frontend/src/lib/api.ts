@@ -139,6 +139,7 @@ export const api = {
   },
   parts: {
     list: (includeArchived = false) => fetchApi<Part[]>(`/parts${includeArchived ? '?include_archived=true' : ''}`),
+    listTypes: () => fetchApi<string[]>('/parts/types'),
     get: (id: number) => fetchApi<Part>(`/parts/${id}`),
     create: (data: PartCreate) => fetchApi<Part>('/parts', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: number, data: Partial<PartCreate>) => fetchApi<Part>(`/parts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
@@ -388,6 +389,7 @@ export interface Part {
   name: string;
   cipher: string | null;
   article: string | null;
+  part_type: string | null;
   description: string | null;
   is_archived: boolean;
   created_at: string;
@@ -396,6 +398,7 @@ export interface PartCreate {
   name: string;
   cipher?: string | null;
   article?: string | null;
+  part_type?: string | null;
   description?: string | null;
 }
 

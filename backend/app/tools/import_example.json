@@ -17,6 +17,7 @@
               "name": "Корпус пластиковый",
               "cipher": "АБВГ.301261.001",
               "article": "ART-1001",
+              "part_type": "Корпуса",
               "description": "Ударопрочный ABS-пластик, IP65"
             },
             "qty_per_device": 1,
@@ -28,6 +29,7 @@
               "name": "Плата печатная основная",
               "cipher": "АБВГ.687243.002",
               "article": "ART-1002",
+              "part_type": "Платы",
               "description": "FR-4, 2 слоя, 1.5 мм"
             },
             "qty_per_device": 1,
@@ -39,6 +41,7 @@
               "name": "Резистор 10 кОм",
               "cipher": "Р1-12-0.125-10к",
               "article": "ART-1003",
+              "part_type": "Резисторы",
               "description": "Точность 1%, 0.125 Вт"
             },
             "qty_per_device": 5,
@@ -50,6 +53,7 @@
               "name": "Термопара тип K",
               "cipher": "ТХА-0001",
               "article": "ART-1005",
+              "part_type": "Датчики",
               "description": "Хромель-алюмель, класс 1"
             },
             "qty_per_device": 1,
@@ -74,6 +78,7 @@
               "name": "Корпус пластиковый",
               "cipher": "АБВГ.301261.001",
               "article": "ART-1001",
+              "part_type": "Корпуса",
               "description": "Ударопрочный ABS-пластик, IP65"
             },
             "qty_per_device": 1,
@@ -85,6 +90,7 @@
               "name": "Трансформатор 12В",
               "cipher": "ТП-12-5",
               "article": "ART-1007",
+              "part_type": "Трансформаторы",
               "description": "Первичная 220 В, вторичная 12 В, 5 Вт"
             },
             "qty_per_device": 1,
@@ -121,6 +127,7 @@
               "name": "Модуль интерфейса",
               "cipher": "АБВГ.468332.008",
               "article": "ART-1008",
+              "part_type": "Платы",
               "description": "RS-485 / RS-232, гальваническая развязка"
             },
             "qty_per_device": 1,

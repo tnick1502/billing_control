@@ -3,18 +3,50 @@
   import { api } from '$lib/api';
   import type { Part, PartCreate } from '$lib/api';
 
+  const NO_TYPE_LABEL = 'Без типа';
+  const EXPANDED_STORAGE_KEY = 'parts:expandedGroups';
+
   let parts: Part[] = [];
+  let partTypes: string[] = [];
   let loading = true;
   let modalOpen = false;
-  let form: PartCreate = { name: '', cipher: null, article: null, description: null };
+  let form: PartCreate = { name: '', cipher: null, article: null, part_type: null, description: null };
   let editingId: number | null = null;
   let editingIsArchived = false;
   let searchQuery = '';
   let showArchived = false;
+  let typeQuery = '';
+  let typeDropdownOpen = false;
+  let expanded: Record<string, boolean> = loadExpanded();
 
   $: filteredParts = filterParts(parts, searchQuery, showArchived);
+  $: groupedParts = groupParts(filteredParts);
+  $: groupKeys = Object.keys(groupedParts).sort(compareGroupKeys);
+  $: filteredTypeOptions = filterTypeOptions(partTypes, typeQuery);
 
-  onMount(load);
+  onMount(() => {
+    load();
+    loadTypes();
+  });
+
+  function loadExpanded(): Record<string, boolean> {
+    if (typeof localStorage === 'undefined') return {};
+    try {
+      const raw = localStorage.getItem(EXPANDED_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function saveExpanded() {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem(EXPANDED_STORAGE_KEY, JSON.stringify(expanded));
+    } catch {
+      /* ignore */
+    }
+  }
 
   async function load() {
     loading = true;
@@ -27,17 +59,35 @@
     }
   }
 
+  async function loadTypes() {
+    try {
+      partTypes = await api.parts.listTypes();
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
   function openCreate() {
     editingId = null;
     editingIsArchived = false;
-    form = { name: '', cipher: null, article: null, description: null };
+    form = { name: '', cipher: null, article: null, part_type: null, description: null };
+    typeQuery = '';
+    typeDropdownOpen = false;
     modalOpen = true;
   }
 
   function openEdit(p: Part) {
     editingId = p.id;
     editingIsArchived = p.is_archived;
-    form = { name: p.name, cipher: p.cipher ?? null, article: p.article ?? null, description: p.description ?? null };
+    form = {
+      name: p.name,
+      cipher: p.cipher ?? null,
+      article: p.article ?? null,
+      part_type: p.part_type ?? null,
+      description: p.description ?? null,
+    };
+    typeQuery = p.part_type ?? '';
+    typeDropdownOpen = false;
     modalOpen = true;
   }
 
@@ -46,15 +96,69 @@
     const needle = query.trim().toLowerCase();
     if (!needle) return visible;
     return visible.filter((p) => {
-      const haystack = `${p.name ?? ''} ${p.cipher ?? ''} ${p.article ?? ''} ${p.description ?? ''}`.toLowerCase();
+      const haystack = `${p.name ?? ''} ${p.cipher ?? ''} ${p.article ?? ''} ${p.part_type ?? ''} ${p.description ?? ''}`.toLowerCase();
       return haystack.includes(needle);
     });
+  }
+
+  function groupKey(p: Part): string {
+    const t = (p.part_type ?? '').trim();
+    return t || NO_TYPE_LABEL;
+  }
+
+  function groupParts(items: Part[]): Record<string, Part[]> {
+    const groups: Record<string, Part[]> = {};
+    for (const p of items) {
+      const key = groupKey(p);
+      (groups[key] ??= []).push(p);
+    }
+    return groups;
+  }
+
+  function compareGroupKeys(a: string, b: string) {
+    if (a === NO_TYPE_LABEL) return 1;
+    if (b === NO_TYPE_LABEL) return -1;
+    return a.localeCompare(b, 'ru');
+  }
+
+  function isExpanded(key: string): boolean {
+    return expanded[key] !== false;
+  }
+
+  function toggleGroup(key: string) {
+    expanded = { ...expanded, [key]: !isExpanded(key) };
+    saveExpanded();
+  }
+
+  function filterTypeOptions(types: string[], query: string): string[] {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return types;
+    return types.filter((t) => t.toLowerCase().includes(needle));
+  }
+
+  function selectType(t: string) {
+    form.part_type = t;
+    typeQuery = t;
+    typeDropdownOpen = false;
+  }
+
+  function onTypeInput(value: string) {
+    typeQuery = value;
+    form.part_type = value.trim() || null;
+    typeDropdownOpen = true;
   }
 
   function handleRowKeydown(event: KeyboardEvent, part: Part) {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       openEdit(part);
+    }
+  }
+
+  function handleGroupKeydown(event: KeyboardEvent, key: string) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      toggleGroup(key);
     }
   }
 
@@ -66,7 +170,8 @@
         await api.parts.create(form);
       }
       modalOpen = false;
-      load();
+      await load();
+      await loadTypes();
     } catch (e) {
       alert((e as Error).message);
     }
@@ -77,7 +182,8 @@
       await api.parts.archive(id, !currentlyArchived);
       modalOpen = false;
       editingId = null;
-      load();
+      await load();
+      await loadTypes();
     } catch (e) {
       alert((e as Error).message);
     }
@@ -89,7 +195,8 @@
       await api.parts.delete(id);
       modalOpen = false;
       editingId = null;
-      load();
+      await load();
+      await loadTypes();
     } catch (e) {
       alert((e as Error).message);
     }
@@ -122,44 +229,61 @@
 
   {#if loading}
     <p class="text-zinc-400">Загрузка...</p>
+  {:else if filteredParts.length === 0}
+    <div class="rounded-xl border border-zinc-700 px-4 py-6 text-center text-zinc-400">Ничего не найдено.</div>
   {:else}
-    <div class="overflow-x-auto rounded-xl border border-zinc-700">
-      <table class="w-full">
-        <thead class="bg-surface-800 text-zinc-400 text-left">
-          <tr>
-            <th class="px-4 py-3 font-medium">ID</th>
-            <th class="px-4 py-3 font-medium">Название</th>
-            <th class="px-4 py-3 font-medium">Шифр</th>
-            <th class="px-4 py-3 font-medium">Артикул</th>
-            <th class="px-4 py-3 font-medium">Описание</th>
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-zinc-800">
-          {#each filteredParts as p}
-            <tr
-              class="cursor-pointer hover:bg-zinc-800/50 {p.is_archived ? 'opacity-50' : ''}"
-              on:click={() => openEdit(p)}
-              on:keydown={(event) => handleRowKeydown(event, p)}
-              role="button"
-              tabindex="0"
-            >
-              <td class="px-4 py-3 font-mono text-sm">{p.id ?? '—'}</td>
-              <td class="px-4 py-3">
-                <span class="{p.is_archived ? 'line-through text-zinc-500' : ''}">{p.name}</span>
-                {#if p.is_archived}
-                  <span class="ml-2 px-1.5 py-0.5 text-[10px] bg-zinc-700 text-zinc-400 rounded">Архив</span>
-                {/if}
-              </td>
-              <td class="px-4 py-3 text-zinc-300">{p.cipher || '—'}</td>
-              <td class="px-4 py-3 text-zinc-300">{p.article || '—'}</td>
-              <td class="px-4 py-3 text-zinc-400 max-w-xs truncate">{p.description || '—'}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-      {#if filteredParts.length === 0}
-        <div class="px-4 py-6 text-center text-zinc-400">Ничего не найдено.</div>
-      {/if}
+    <div class="space-y-4">
+      {#each groupKeys as key (key)}
+        <div class="overflow-hidden rounded-xl border border-zinc-700">
+          <button
+            type="button"
+            on:click={() => toggleGroup(key)}
+            on:keydown={(e) => handleGroupKeydown(e, key)}
+            class="flex w-full items-center gap-2 bg-surface-800 px-4 py-3 text-left hover:bg-zinc-800"
+          >
+            <span class="text-zinc-400 text-xs">{isExpanded(key) ? '▾' : '▸'}</span>
+            <span class="font-medium text-white">{key}</span>
+            <span class="text-xs text-zinc-400">({groupedParts[key].length})</span>
+          </button>
+          {#if isExpanded(key)}
+            <div class="overflow-x-auto">
+              <table class="w-full">
+                <thead class="bg-zinc-900 text-zinc-400 text-left">
+                  <tr>
+                    <th class="px-4 py-2 font-medium text-sm">ID</th>
+                    <th class="px-4 py-2 font-medium text-sm">Название</th>
+                    <th class="px-4 py-2 font-medium text-sm">Шифр</th>
+                    <th class="px-4 py-2 font-medium text-sm">Артикул</th>
+                    <th class="px-4 py-2 font-medium text-sm">Описание</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-zinc-800">
+                  {#each groupedParts[key] as p (p.id)}
+                    <tr
+                      class="cursor-pointer hover:bg-zinc-800/50 {p.is_archived ? 'opacity-50' : ''}"
+                      on:click={() => openEdit(p)}
+                      on:keydown={(event) => handleRowKeydown(event, p)}
+                      role="button"
+                      tabindex="0"
+                    >
+                      <td class="px-4 py-3 font-mono text-sm">{p.id ?? '—'}</td>
+                      <td class="px-4 py-3">
+                        <span class="{p.is_archived ? 'line-through text-zinc-500' : ''}">{p.name}</span>
+                        {#if p.is_archived}
+                          <span class="ml-2 px-1.5 py-0.5 text-[10px] bg-zinc-700 text-zinc-400 rounded">Архив</span>
+                        {/if}
+                      </td>
+                      <td class="px-4 py-3 text-zinc-300">{p.cipher || '—'}</td>
+                      <td class="px-4 py-3 text-zinc-300">{p.article || '—'}</td>
+                      <td class="px-4 py-3 text-zinc-400 max-w-xs truncate">{p.description || '—'}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+        </div>
+      {/each}
     </div>
   {/if}
 </div>
@@ -191,6 +315,32 @@
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Артикул</label>
           <input bind:value={form.article} placeholder="Опционально" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        </div>
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1" for="part-type-input">Тип детали</label>
+          <input
+            id="part-type-input"
+            type="search"
+            value={typeQuery}
+            on:input={(e) => onTypeInput(e.currentTarget.value)}
+            on:focus={() => (typeDropdownOpen = true)}
+            placeholder="Выберите из списка или введите новый"
+            class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
+            autocomplete="off"
+          />
+          {#if typeDropdownOpen && filteredTypeOptions.length > 0}
+            <div class="mt-1 rounded-lg border border-zinc-700 bg-zinc-950/90 max-h-40 overflow-y-auto">
+              {#each filteredTypeOptions as t}
+                <button
+                  type="button"
+                  on:click={() => selectType(t)}
+                  class="w-full text-left px-3 py-1.5 text-sm text-zinc-200 hover:bg-zinc-800"
+                >
+                  {t}
+                </button>
+              {/each}
+            </div>
+          {/if}
         </div>
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Описание</label>

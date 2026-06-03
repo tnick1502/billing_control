@@ -86,6 +86,7 @@ class PartSpec:
     name: str
     cipher: str | None = None
     article: str | None = None
+    part_type: str | None = None
     description: str | None = None
 
 
@@ -134,6 +135,7 @@ def _parse_part(raw: Any, path: str) -> PartSpec:
         name=name,
         cipher=_clean(raw.get("cipher")),
         article=_clean(raw.get("article")),
+        part_type=_clean(raw.get("part_type")),
         description=_clean(raw.get("description")),
     )
 
@@ -282,7 +284,13 @@ async def _get_or_create_part(
         stats.parts_reused += 1
         return existing
 
-    part = Part(name=spec.name, cipher=spec.cipher, article=spec.article, description=spec.description)
+    part = Part(
+        name=spec.name,
+        cipher=spec.cipher,
+        article=spec.article,
+        part_type=spec.part_type,
+        description=spec.description,
+    )
     session.add(part)
     await session.flush()
     cache[key] = part
