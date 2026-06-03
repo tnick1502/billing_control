@@ -17,6 +17,7 @@ from app.schemas.common import (
     InvoicePartLinkUpdate,
     FileRead,
 )
+from app.services.carryover import recompute_carryover_links
 from app.services.file_storage import delete_orphaned_files, save_upload_as_file
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
@@ -154,6 +155,7 @@ async def delete_invoice(invoice_id: int, session: AsyncSession = Depends(get_db
     file_ids = list(linked.scalars().all())
     await session.delete(invoice)
     await session.flush()
+    await recompute_carryover_links(session)
     await delete_orphaned_files(session, file_ids)
     return None
 
@@ -209,9 +211,10 @@ async def create_invoice_part_link(
     result = await session.execute(select(Invoice).where(Invoice.id == invoice_id))
     if not result.scalar_one_or_none():
         raise HTTPException(404, "Invoice not found")
-    link = InvoicePartLink(invoice_id=invoice_id, **data.model_dump())
+    link = InvoicePartLink(invoice_id=invoice_id, is_carryover=False, **data.model_dump())
     session.add(link)
     await session.flush()
+    await recompute_carryover_links(session)
     await session.refresh(link)
     return link
 
@@ -232,9 +235,12 @@ async def update_invoice_part_link(
     link = result.scalar_one_or_none()
     if not link:
         raise HTTPException(404, "Invoice part link not found")
+    if link.is_carryover:
+        raise HTTPException(400, "Привязка-перенос пересобирается автоматически и не редактируется")
     for k, v in data.model_dump(exclude_unset=True).items():
         setattr(link, k, v)
     await session.flush()
+    await recompute_carryover_links(session)
     await session.refresh(link)
     return link
 
@@ -250,5 +256,9 @@ async def delete_invoice_part_link(invoice_id: int, link_id: int, session: Async
     link = result.scalar_one_or_none()
     if not link:
         raise HTTPException(404, "Invoice part link not found")
+    if link.is_carryover:
+        raise HTTPException(400, "Привязка-перенос пересобирается автоматически и не отвязывается вручную")
     await session.delete(link)
+    await session.flush()
+    await recompute_carryover_links(session)
     return None

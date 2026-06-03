@@ -194,6 +194,7 @@ export const api = {
     devices: (planId: number) => fetchApi<MonthlyPlanDevice[]>(`/monthly-plans/${planId}/devices`),
     parts: (planId: number) => fetchApi<MonthlyPlanPart[]>(`/monthly-plans/${planId}/parts`),
     partsWithCoverage: (planId: number) => fetchApi<MonthlyPlanPartWithCoverage[]>(`/monthly-plans/${planId}/parts-with-coverage`),
+    remainders: () => fetchApi<RemaindersMatrix>('/monthly-plans/remainders'),
     updatePlanPartDelivered: (planId: number, planPartId: number, qty_delivered: string) =>
       fetchApi<MonthlyPlanPart>(`/monthly-plans/${planId}/parts/${planPartId}`, {
         method: 'PATCH',
@@ -553,6 +554,32 @@ export interface PartInvoiceCoverage {
   supplier: string | null;
   payment_date: string | null;
   qty_covered: string | null;
+  /** true — авто-привязка переноса остатка (нередактируемая) */
+  is_carryover?: boolean;
+}
+
+export interface RemainderPart {
+  part_id: number;
+  name: string;
+  part_type: string | null;
+  /** Общий остаток на конец последнего рассчитанного месяца */
+  remainder: string;
+  /** month (YYYY-MM-DD) -> перезаказ за месяц (>0) */
+  overorders: Record<string, string>;
+}
+
+export interface UndersupplyPart {
+  part_id: number;
+  name: string;
+  part_type: string | null;
+  qty: string;
+}
+
+export interface RemaindersMatrix {
+  /** Последний рассчитанный месяц (YYYY-MM-DD) или null */
+  current_month: string | null;
+  remainders: RemainderPart[];
+  undersupply: UndersupplyPart[];
 }
 export interface PlanPartFile {
   id: number;

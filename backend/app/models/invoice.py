@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, LargeBinary, Numeric, String, Text, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, LargeBinary, Numeric, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -77,6 +77,8 @@ class InvoicePartLink(Base):
     part_id: Mapped[int] = mapped_column(ForeignKey("parts.id", ondelete="CASCADE"), nullable=False)
     qty_covered: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # true — авто-привязка, созданная переносом остатка прошлых месяцев (пересобирается автоматически)
+    is_carryover: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     __table_args__ = (UniqueConstraint("invoice_id", "plan_id", "part_id", name="uq_invoice_part_links_invoice_plan_part"),)

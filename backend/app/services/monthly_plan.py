@@ -112,7 +112,10 @@ async def generate_monthly_plan(
                     InvoicePartLink.part_id,
                     InvoicePartLink.qty_covered,
                     InvoicePartLink.note,
-                ).where(InvoicePartLink.plan_id.in_(plan_ids))
+                ).where(
+                    InvoicePartLink.plan_id.in_(plan_ids),
+                    InvoicePartLink.is_carryover.is_(False),
+                )
             )
             seen_ip: set[tuple[int, int]] = set()
             for row in lk_res.all():

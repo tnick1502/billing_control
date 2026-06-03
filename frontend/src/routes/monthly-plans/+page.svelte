@@ -2,18 +2,21 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import { formatQty, formatIntegerQty, formatAmount, formatDate, formatDateTime, formatFileSize } from '$lib/format';
-  import type { MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPartWithCoverage, InvoiceCreate, Invoice, PartInvoiceCoverage, InvoiceFileInfo, PlanPartFile } from '$lib/api';
+  import type { MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPartWithCoverage, InvoiceCreate, Invoice, PartInvoiceCoverage, InvoiceFileInfo, PlanPartFile, RemaindersMatrix, RemainderPart, UndersupplyPart } from '$lib/api';
 
   type PlanDetail = { devices: MonthlyPlanDevice[]; parts: MonthlyPlanPartWithCoverage[] };
 
   const NO_TYPE_LABEL = 'Без типа';
-  const PART_GROUPS_STORAGE_KEY = 'monthly-plans:expandedPartGroups';
+  // v2: состояние свёрнутости теперь хранится по плану (раньше — только по имени группы,
+  // из-за чего свёрнутая «Без типа» пряталась сразу во всех планах). Новый ключ сбрасывает старое состояние.
+  const PART_GROUPS_STORAGE_KEY = 'monthly-plans:expandedPartGroups:v2';
 
   let plans: MonthlyPlan[] = [];
   let plansDetail: Record<number, PlanDetail> = {};
   let devices: { id: number; primary_name: string }[] = [];
   let parts: { id: number; name: string; part_type: string | null }[] = [];
   let invoices: Invoice[] = [];
+  // Ключ — `${planId}:${groupKey}`, чтобы свёрнутость группы не делилась между планами
   let expandedPartGroups: Record<string, boolean> = loadExpandedPartGroups();
 
   function loadExpandedPartGroups(): Record<string, boolean> {
@@ -34,6 +37,14 @@
       /* ignore */
     }
   }
+  // Окно остатков (перенос дельты между месяцами)
+  let remaindersModalOpen = false;
+  let remaindersLoading = false;
+  let remaindersError = '';
+  let remaindersData: RemaindersMatrix | null = null;
+  let expandedRemainderGroups: Record<string, boolean> = {};
+  let expandedRemainderParts: Record<number, boolean> = {};
+
   let loading = true;
   let loadError = '';
   let generateModalOpen = false;
@@ -210,21 +221,78 @@
     return a.localeCompare(b, 'ru');
   }
 
-  function isPartGroupExpanded(key: string): boolean {
-    return expandedPartGroups[key] !== false;
+  function partGroupStateKey(planId: number, key: string): string {
+    return `${planId}:${key}`;
   }
 
-  function togglePartGroup(key: string) {
-    expandedPartGroups = { ...expandedPartGroups, [key]: !isPartGroupExpanded(key) };
+  function isPartGroupExpanded(planId: number, key: string): boolean {
+    return expandedPartGroups[partGroupStateKey(planId, key)] !== false;
+  }
+
+  function togglePartGroup(planId: number, key: string) {
+    const stateKey = partGroupStateKey(planId, key);
+    expandedPartGroups = { ...expandedPartGroups, [stateKey]: !isPartGroupExpanded(planId, key) };
     saveExpandedPartGroups();
   }
 
-  function handlePartGroupKeydown(event: KeyboardEvent, key: string) {
+  function handlePartGroupKeydown(event: KeyboardEvent, planId: number, key: string) {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      togglePartGroup(key);
+      togglePartGroup(planId, key);
     }
   }
+
+  async function openRemainders() {
+    remaindersModalOpen = true;
+    remaindersLoading = true;
+    remaindersError = '';
+    try {
+      remaindersData = await api.monthlyPlans.remainders();
+    } catch (e) {
+      remaindersError = (e as Error).message || 'Не удалось загрузить остатки';
+      remaindersData = null;
+    } finally {
+      remaindersLoading = false;
+    }
+  }
+
+  function monthLabel(m: string): string {
+    const d = new Date(m);
+    if (isNaN(d.getTime())) return m;
+    return d.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+  }
+
+  function typeOfPart(part_type: string | null): string {
+    return (part_type ?? '').trim() || NO_TYPE_LABEL;
+  }
+
+  function isRemainderGroupExpanded(key: string): boolean {
+    return expandedRemainderGroups[key] !== false;
+  }
+
+  function toggleRemainderGroup(key: string) {
+    expandedRemainderGroups = { ...expandedRemainderGroups, [key]: !isRemainderGroupExpanded(key) };
+  }
+
+  function toggleRemainderPart(partId: number) {
+    expandedRemainderParts = { ...expandedRemainderParts, [partId]: !expandedRemainderParts[partId] };
+  }
+
+  /** Остатки (>0) сгруппированы по типу детали */
+  $: remainderGroups = (() => {
+    if (!remaindersData) return [] as { type: string; parts: RemainderPart[] }[];
+    const byType: Record<string, RemainderPart[]> = {};
+    for (const p of remaindersData.remainders) (byType[typeOfPart(p.part_type)] ??= []).push(p);
+    return Object.keys(byType).sort(comparePartGroupKeys).map((type) => ({ type, parts: byType[type] }));
+  })();
+
+  /** Детали с недозаказом за текущий месяц, сгруппированы по типу */
+  $: undersupplyGroups = (() => {
+    if (!remaindersData) return [] as { type: string; parts: UndersupplyPart[] }[];
+    const byType: Record<string, UndersupplyPart[]> = {};
+    for (const p of remaindersData.undersupply) (byType[typeOfPart(p.part_type)] ??= []).push(p);
+    return Object.keys(byType).sort(comparePartGroupKeys).map((type) => ({ type, parts: byType[type] }));
+  })();
 
   function deliveryOk(p: MonthlyPlanPartWithCoverage) {
     if (p.delivery_complete != null) return p.delivery_complete;
@@ -513,9 +581,14 @@
 <div class="p-8">
   <div class="flex justify-between items-center mb-6">
     <h1 class="text-2xl font-bold text-white">Месячные планы</h1>
-    <button on:click={() => generateModalOpen = true} class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400 transition-colors">
-      Сгенерировать план
-    </button>
+    <div class="flex items-center gap-2">
+      <button on:click={openRemainders} class="px-4 py-2 bg-zinc-700 text-white font-medium rounded-lg hover:bg-zinc-600 transition-colors">
+        Остатки деталей
+      </button>
+      <button on:click={() => generateModalOpen = true} class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400 transition-colors">
+        Сгенерировать план
+      </button>
+    </div>
   </div>
 
   {#if loading}
@@ -588,15 +661,15 @@
                 <div class="overflow-hidden rounded-xl border border-zinc-700">
                   <button
                     type="button"
-                    on:click={() => togglePartGroup(groupKey)}
-                    on:keydown={(e) => handlePartGroupKeydown(e, groupKey)}
+                    on:click={() => togglePartGroup(Number(plan.id), groupKey)}
+                    on:keydown={(e) => handlePartGroupKeydown(e, Number(plan.id), groupKey)}
                     class="flex w-full items-center gap-2 bg-zinc-800 px-4 py-2 text-left hover:bg-zinc-700/80"
                   >
-                    <span class="text-zinc-400 text-xs">{isPartGroupExpanded(groupKey) ? '▾' : '▸'}</span>
+                    <span class="text-zinc-400 text-xs">{isPartGroupExpanded(Number(plan.id), groupKey) ? '▾' : '▸'}</span>
                     <span class="font-medium text-white text-sm">{groupKey}</span>
                     <span class="text-xs text-zinc-400">({partGroups[groupKey].length})</span>
                   </button>
-                  {#if isPartGroupExpanded(groupKey)}
+                  {#if isPartGroupExpanded(Number(plan.id), groupKey)}
               <table class="w-full">
                 <thead class="bg-zinc-900 text-zinc-400 text-left">
                   <tr>
@@ -638,9 +711,13 @@
                                 <div class="flex items-center gap-2 min-w-0 px-2 py-1.5 cursor-pointer">
                                   <span class="text-zinc-400 text-[10px] shrink-0">{isExpanded ? '▾' : '▸'}</span>
                                   <span class="font-mono shrink-0">№{inv.invoice_no}</span>
+                                  {#if inv.is_carryover}
+                                    <span class="shrink-0 rounded bg-sky-500/20 border border-sky-500/40 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-sky-200" title="Автоматический перенос остатка прошлых месяцев">перенос</span>
+                                  {/if}
                                   <span class="min-w-0 flex-1 truncate text-zinc-300">{inv.supplier || 'без поставщика'}</span>
                                   <span class="font-mono shrink-0">покр. {formatIntegerQty(inv.qty_covered)}</span>
                                   <span class="shrink-0 {inv.payment_date ? 'text-emerald-300' : 'text-red-300'}">опл. {formatDate(inv.payment_date)}</span>
+                                  {#if !inv.is_carryover}
                                   <button
                                     type="button"
                                     class="shrink-0 text-xs text-amber-300 hover:text-amber-200 underline"
@@ -655,6 +732,7 @@
                                   >
                                     Отвязать
                                   </button>
+                                  {/if}
                                 </div>
                                 {#if isExpanded}
                                   <div class="border-t border-white/10 px-2 py-2 space-y-2">
@@ -819,6 +897,115 @@
     </div>
   {/if}
 </div>
+
+{#if remaindersModalOpen}
+  <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" on:click={() => remaindersModalOpen = false} role="button" tabindex="0">
+    <div class="bg-surface-800 rounded-xl border border-zinc-700 w-full max-w-6xl max-h-[90vh] flex flex-col" on:click|stopPropagation role="dialog">
+      <div class="flex items-center justify-between border-b border-zinc-700 px-6 py-4">
+        <div>
+          <h2 class="text-lg font-semibold text-white">Остатки деталей</h2>
+          <p class="text-xs text-zinc-400 mt-0.5">Излишек заказа по счетам на последний рассчитанный план. Клик по детали — разбивка перезаказа по месяцам.</p>
+        </div>
+        <button type="button" on:click={() => remaindersModalOpen = false} class="text-zinc-400 hover:text-white text-xl leading-none px-2">×</button>
+      </div>
+
+      <div class="overflow-auto px-6 py-4">
+        {#if remaindersLoading}
+          <p class="text-zinc-400">Загрузка…</p>
+        {:else if remaindersError}
+          <p class="text-red-300 text-sm">{remaindersError}</p>
+        {:else if !remaindersData || !remaindersData.current_month}
+          <p class="text-zinc-400 text-sm">Нет данных: создайте месячные планы и привяжите счета.</p>
+        {:else}
+          <h3 class="text-sm font-semibold text-white mb-2">Остатки на конец {monthLabel(remaindersData.current_month)}</h3>
+          {#if remainderGroups.length === 0}
+            <p class="text-zinc-400 text-sm">Остатков нет — излишков заказа по счетам не осталось.</p>
+          {:else}
+            <div class="space-y-3">
+              {#each remainderGroups as g (g.type)}
+                <div class="overflow-hidden rounded-xl border border-zinc-700">
+                  <button
+                    type="button"
+                    on:click={() => toggleRemainderGroup(g.type)}
+                    class="flex w-full items-center gap-2 bg-zinc-800 px-4 py-2 text-left hover:bg-zinc-700/80"
+                  >
+                    <span class="text-zinc-400 text-xs">{isRemainderGroupExpanded(g.type) ? '▾' : '▸'}</span>
+                    <span class="font-medium text-white text-sm">{g.type}</span>
+                    <span class="text-xs text-zinc-400">({g.parts.length})</span>
+                  </button>
+                  {#if isRemainderGroupExpanded(g.type)}
+                    <ul class="divide-y divide-zinc-800">
+                      {#each g.parts as p (p.part_id)}
+                        {@const months = Object.keys(p.overorders)}
+                        <li>
+                          <button
+                            type="button"
+                            on:click={() => toggleRemainderPart(p.part_id)}
+                            class="flex w-full items-center gap-3 px-4 py-2 text-left text-sm hover:bg-zinc-800/40"
+                          >
+                            <span class="text-zinc-500 text-[10px] w-2">{months.length ? (expandedRemainderParts[p.part_id] ? '▾' : '▸') : ''}</span>
+                            <span class="flex-1 text-zinc-100">{p.name}</span>
+                            <span class="font-mono text-emerald-300">{formatIntegerQty(p.remainder)}</span>
+                          </button>
+                          {#if expandedRemainderParts[p.part_id]}
+                            <div class="px-4 pb-3 pl-9">
+                              <div class="text-[11px] text-zinc-500 mb-1">Перезаказано по месяцам:</div>
+                              {#if months.length === 0}
+                                <div class="text-[11px] text-zinc-500">нет данных</div>
+                              {:else}
+                                <ul class="space-y-0.5">
+                                  {#each months as m}
+                                    <li class="flex justify-between text-[11px] text-zinc-300 max-w-xs">
+                                      <span>{monthLabel(m)}</span>
+                                      <span class="font-mono text-emerald-300">+{formatIntegerQty(p.overorders[m])}</span>
+                                    </li>
+                                  {/each}
+                                </ul>
+                              {/if}
+                            </div>
+                          {/if}
+                        </li>
+                      {/each}
+                    </ul>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
+
+          <div class="mt-6">
+            <h3 class="text-sm font-semibold text-white mb-1">
+              Недозаказ за текущий месяц
+              <span class="text-zinc-400 font-normal">— {monthLabel(remaindersData.current_month)}</span>
+            </h3>
+            <p class="text-xs text-zinc-500 mb-2">Потребность минус заказ по счетам за месяц, без учёта переносов остатков.</p>
+            {#if undersupplyGroups.length === 0}
+              <p class="text-emerald-300 text-sm">Недозаказа нет — все детали обеспечены счетами этого месяца.</p>
+            {:else}
+              <div class="space-y-3">
+                {#each undersupplyGroups as g (g.type)}
+                  <div class="rounded-xl border border-red-900/50 overflow-hidden">
+                    <div class="bg-red-950/40 px-4 py-2 text-sm font-medium text-red-200">{g.type}</div>
+                    <table class="w-full text-sm">
+                      <tbody class="divide-y divide-zinc-800">
+                        {#each g.parts as item (item.part_id)}
+                          <tr class="hover:bg-zinc-800/40">
+                            <td class="px-4 py-2 text-zinc-200">{item.name}</td>
+                            <td class="px-4 py-2 text-right font-mono text-red-300 w-32">−{formatIntegerQty(item.qty)}</td>
+                          </tr>
+                        {/each}
+                      </tbody>
+                    </table>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
 
 {#if generateModalOpen}
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" on:click={() => generateModalOpen = false} role="button" tabindex="0">

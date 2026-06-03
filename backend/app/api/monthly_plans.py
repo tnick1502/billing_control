@@ -19,6 +19,7 @@ from app.schemas.common import (
     MonthlyPlanPartRead,
     MonthlyPlanPartQtyDeliveredUpdate,
 )
+from app.services.carryover import compute_carryover, recompute_carryover_links
 from app.services.file_storage import delete_orphaned_files, save_upload_as_file
 from app.services.monthly_plan import generate_monthly_plan as do_generate
 
@@ -45,10 +46,63 @@ async def generate_plan(data: MonthlyPlanGenerate, session: AsyncSession = Depen
     try:
         plan = await do_generate(session, data.month, data.replace)
         await session.flush()
+        await recompute_carryover_links(session)
         await session.refresh(plan)
         return plan
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@router.get("/remainders")
+async def get_remainders(session: AsyncSession = Depends(get_db)):
+    """Общие остатки деталей на последний рассчитанный план + недозаказ текущего месяца.
+
+    - remainders: детали с остатком > 0 на конец последнего месяца; по каждой — разбивка
+      перезаказа по месяцам (в каком месяце сколько было заказано сверх потребности).
+    - undersupply: детали с недозаказом за текущий (последний) месяц, без учёта переносов.
+
+    Объявлен ВЫШЕ /{plan_id}, иначе FastAPI примет "remainders" за plan_id.
+    """
+    result = await compute_carryover(session)
+    if not result.months:
+        return {"current_month": None, "remainders": [], "undersupply": []}
+
+    current = result.months[-1]
+    remainders = []
+    undersupply = []
+    for part_id, meta in result.parts.items():
+        balances = result.balances.get(part_id, {})
+        overorders = result.overorders.get(part_id, {})
+        under = result.undersupply.get(part_id, {})
+
+        remainder = balances.get(current, Decimal("0"))
+        if remainder > 0:
+            remainders.append(
+                {
+                    "part_id": part_id,
+                    "name": meta["name"],
+                    "part_type": meta["part_type"],
+                    "remainder": str(remainder),
+                    "overorders": {
+                        m.isoformat(): str(v) for m, v in sorted(overorders.items()) if v > 0
+                    },
+                }
+            )
+
+        under_cur = under.get(current, Decimal("0"))
+        if under_cur > 0:
+            undersupply.append(
+                {
+                    "part_id": part_id,
+                    "name": meta["name"],
+                    "part_type": meta["part_type"],
+                    "qty": str(under_cur),
+                }
+            )
+
+    remainders.sort(key=lambda p: (p["name"] or "").lower())
+    undersupply.sort(key=lambda p: (p["name"] or "").lower())
+    return {"current_month": current.isoformat(), "remainders": remainders, "undersupply": undersupply}
 
 
 @router.get("/{plan_id}", response_model=MonthlyPlanRead)
@@ -80,7 +134,10 @@ async def delete_monthly_plan(plan_id: int, session: AsyncSession = Depends(get_
     if not plan:
         raise HTTPException(404, "Monthly plan not found")
     link_count = await session.scalar(
-        select(func.count()).where(InvoicePartLink.plan_id == plan_id)
+        select(func.count()).where(
+            InvoicePartLink.plan_id == plan_id,
+            InvoicePartLink.is_carryover.is_(False),
+        )
     )
     if link_count:
         raise HTTPException(
@@ -88,6 +145,8 @@ async def delete_monthly_plan(plan_id: int, session: AsyncSession = Depends(get_
             detail=f"Нельзя удалить план: к нему привязано {link_count} счетов. Удалите привязки счётов перед удалением плана.",
         )
     await session.delete(plan)
+    await session.flush()
+    await recompute_carryover_links(session)
     return None
 
 
@@ -221,6 +280,7 @@ async def list_plan_parts_with_coverage(plan_id: int, session: AsyncSession = De
             Invoice.supplier,
             Invoice.payment_date,
             InvoicePartLink.qty_covered,
+            InvoicePartLink.is_carryover,
         )
         .join(Invoice, Invoice.id == InvoicePartLink.invoice_id)
         .where(InvoicePartLink.plan_id == plan_id)
@@ -235,6 +295,7 @@ async def list_plan_parts_with_coverage(plan_id: int, session: AsyncSession = De
                 "supplier": row.supplier,
                 "payment_date": row.payment_date.isoformat() if row.payment_date else None,
                 "qty_covered": str(row.qty_covered) if row.qty_covered is not None else None,
+                "is_carryover": bool(row.is_carryover),
             }
         )
 
