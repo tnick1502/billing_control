@@ -118,7 +118,9 @@
           <a href="/parts" class={navClass('/parts', $page.url.pathname)}>Детали</a>
           <a href="/devices" class={navClass('/devices', $page.url.pathname)}>Приборы</a>
           <a href="/bom" class={navClass('/bom', $page.url.pathname)}>Спецификации</a>
-          <a href="/import" class={navClass('/import', $page.url.pathname)}>Загрузка спецификаций</a>
+          {#if currentUser?.role === 'admin'}
+            <a href="/import" class={navClass('/import', $page.url.pathname)}>Загрузка спецификаций</a>
+          {/if}
         </div>
       </div>
 

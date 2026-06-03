@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import type { ImportResult } from '$lib/api';
+  import type { ImportResult, User } from '$lib/api';
 
   let file: File | null = null;
   let updateExisting = false;
@@ -8,6 +9,22 @@
   let error = '';
   let result: ImportResult | null = null;
   let resultIsDryRun = false;
+  let exportingBom = false;
+  let dumpingDb = false;
+  let currentUser: User | null = null;
+  let userLoaded = false;
+
+  onMount(async () => {
+    try {
+      currentUser = await api.auth.me();
+    } catch {
+      currentUser = null;
+    } finally {
+      userLoaded = true;
+    }
+  });
+
+  $: isAdmin = currentUser?.role === 'admin';
 
   function onFileChange(e: Event) {
     const input = e.target as HTMLInputElement;
@@ -33,6 +50,43 @@
       busy = false;
     }
   }
+
+  function triggerDownload(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function exportBom() {
+    exportingBom = true;
+    error = '';
+    try {
+      const { blob, filename } = await api.imports.exportBom();
+      triggerDownload(blob, filename);
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      exportingBom = false;
+    }
+  }
+
+  async function dumpDb() {
+    dumpingDb = true;
+    error = '';
+    try {
+      const { blob, filename } = await api.imports.dumpDb();
+      triggerDownload(blob, filename);
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      dumpingDb = false;
+    }
+  }
 </script>
 
 <div class="p-8 max-w-3xl">
@@ -43,6 +97,15 @@
       Детали не дублируются: совпадение проверяется по наименованию и артикулу.
     </p>
   </div>
+
+  {#if userLoaded && !isAdmin}
+    <div class="rounded-xl border border-red-800/80 bg-red-950/60 p-5 text-sm text-red-100">
+      <span class="font-semibold">Доступ ограничен.</span>
+      Загрузка и выгрузка спецификаций, а также скачивание дампа БД доступны только администратору.
+    </div>
+  {:else if !userLoaded}
+    <p class="text-sm text-zinc-400">Проверка прав…</p>
+  {:else}
 
   <div class="rounded-xl border border-zinc-700 bg-surface-800 p-5 space-y-4">
     <div>
@@ -92,6 +155,31 @@
     </div>
   {/if}
 
+  <div class="mt-4 rounded-xl border border-zinc-700 bg-surface-800 p-5">
+    <h2 class="text-lg font-semibold text-white mb-1">Выгрузка из базы</h2>
+    <p class="text-sm text-zinc-400 mb-4">
+      Скачать текущее состояние БД — JSON в том же формате, что и загрузка, или полный SQL-дамп.
+    </p>
+    <div class="flex flex-wrap gap-3">
+      <button
+        type="button"
+        on:click={exportBom}
+        disabled={exportingBom}
+        class="px-4 py-2 rounded-lg border border-zinc-600 text-zinc-200 font-medium hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        {exportingBom ? 'Готовим JSON…' : 'Скачать JSON спецификаций'}
+      </button>
+      <button
+        type="button"
+        on:click={dumpDb}
+        disabled={dumpingDb}
+        class="px-4 py-2 rounded-lg border border-zinc-600 text-zinc-200 font-medium hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      >
+        {dumpingDb ? 'Готовим дамп…' : 'Скачать SQL-дамп БД'}
+      </button>
+    </div>
+  </div>
+
   {#if result}
     <div class="mt-4 rounded-xl border border-zinc-700 bg-surface-800 p-5">
       <div class="mb-3 flex items-center gap-2">
@@ -137,5 +225,6 @@
         </div>
       {/if}
     </div>
+  {/if}
   {/if}
 </div>

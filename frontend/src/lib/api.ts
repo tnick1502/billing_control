@@ -42,6 +42,12 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+function filenameFromResponse(res: Response, fallback: string): string {
+  const cd = res.headers.get('content-disposition') ?? '';
+  const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+  return m ? decodeURIComponent(m[1]) : fallback;
+}
+
 function parseApiError(res: Response, bodyText: string): Error {
   try {
     const err = JSON.parse(bodyText) as { detail?: unknown };
@@ -276,6 +282,22 @@ export const api = {
       });
       if (!res.ok) throw parseApiError(res, await res.text());
       return res.json() as Promise<ImportResult>;
+    },
+    exportBom: async (): Promise<{ blob: Blob; filename: string }> => {
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}/imports/bom/export`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw parseApiError(res, await res.text());
+      return { blob: await res.blob(), filename: filenameFromResponse(res, 'billing_control_bom.json') };
+    },
+    dumpDb: async (): Promise<{ blob: Blob; filename: string }> => {
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}/imports/db/dump`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw parseApiError(res, await res.text());
+      return { blob: await res.blob(), filename: filenameFromResponse(res, 'billing_control_dump.sql') };
     },
   },
   files: {
