@@ -1,28 +1,30 @@
+import json
 from pathlib import Path
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import select, text
+from sqlalchemy import exists, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     Device,
-    DeviceAlias,
-    Part,
-    Order,
-    OrderItem,
-    OrderPartItem,
-    DeviceBomVersion,
     DeviceBomItem,
+    DeviceBomVersion,
     Invoice,
     InvoiceFile,
     InvoicePartLink,
+    Order,
+    OrderItem,
+    OrderPartItem,
+    Part,
 )
 from app.services.file_storage import save_bytes_as_file
 from app.services.monthly_plan import generate_monthly_plan
+from app.tools.bulk_import import parse_document, import_document as _bulk_import
 
 
 _SEED_ATTACHMENT = Path(__file__).resolve().parent / "fixtures" / "sample_invoice_attachment.txt"
+_IMPORT_FILE = Path(__file__).resolve().parent.parent / "tools" / "import_strick.json"
 
 
 async def clear_database(session: AsyncSession) -> None:
@@ -52,59 +54,55 @@ async def seed_database(session: AsyncSession, force: bool = False) -> bool:
 
 async def generate_test_data(session: AsyncSession) -> None:
     """Generate test data for an empty database."""
-    # Devices
-    d1 = Device(primary_name="Датчик температуры Т-100", model="T-100", description="Промышленный датчик температуры")
-    d2 = Device(primary_name="Реле контроля РК-5", model="RK-5", description="Реле контроля напряжения")
-    d3 = Device(primary_name="Блок питания БП-12", model="BP-12", description="Блок питания 12В")
-    session.add_all([d1, d2, d3])
-    await session.flush()
+    # Phase 1: load devices, parts and BOMs from the prepared import file
+    raw = json.loads(_IMPORT_FILE.read_text(encoding="utf-8"))
+    doc = parse_document(raw)
+    await _bulk_import(session, doc, update_existing=False)
 
-    # Device aliases
-    session.add_all([
-        DeviceAlias(device_id=d1.id, alias_name="Температурный датчик"),
-        DeviceAlias(device_id=d2.id, alias_name="Реле РК5"),
-    ])
+    # Phase 2: query imported devices with their active BOMs
+    rows = (await session.execute(
+        select(Device, DeviceBomVersion)
+        .join(DeviceBomVersion, (DeviceBomVersion.device_id == Device.id) & (DeviceBomVersion.status == "active"))
+        .order_by(Device.id)
+    )).all()
+    device_bom_pairs: list[tuple[Device, DeviceBomVersion]] = [(r[0], r[1]) for r in rows]
 
-    # Parts
-    p1 = Part(name="Корпус пластиковый", cipher="KP-001", article="ART-1001", description="Ударопрочный корпус")
-    p2 = Part(name="Плата печатная", cipher="PCB-001", article="ART-1002", description="Основная плата")
-    p3 = Part(name="Резистор 10кОм", cipher="R-10K", article="ART-1003", description="Точность 1%")
-    p4 = Part(name="Конденсатор 100мкФ", cipher="C-100UF", article="ART-1004", description="Электролитический")
-    p5 = Part(name="Термопара", cipher="TC-K", article="ART-1005", description="Тип K")
-    p6 = Part(name="Катушка реле", cipher="RC-12V", article="ART-1006", description="12В")
-    p7 = Part(name="Трансформатор 12В", cipher="TR-12V", article="ART-1007", description="Мощность 5Вт")
-    session.add_all([p1, p2, p3, p4, p5, p6, p7])
-    await session.flush()
+    if not device_bom_pairs:
+        return
 
-    # BOM versions (active) — по одному активному на прибор
-    bom1 = DeviceBomVersion(device_id=d1.id, name="Спецификация v1", description="Базовая конфигурация", version=1, status="active")
-    bom2 = DeviceBomVersion(device_id=d2.id, name="Спецификация v1", description="Стандартная комплектация", version=1, status="active")
-    bom3 = DeviceBomVersion(device_id=d3.id, name="Спецификация v1", description="Полный комплект", version=1, status="active")
-    session.add_all([bom1, bom2, bom3])
-    await session.flush()
+    # A few parts for direct order lines and invoice links
+    sample_parts = (await session.execute(select(Part).order_by(Part.id).limit(7))).scalars().all()
 
-    # BOM items
-    session.add_all([
-        DeviceBomItem(bom_version_id=bom1.id, part_id=p1.id, qty_per_device=1, scrap_rate=Decimal("0.02")),
-        DeviceBomItem(bom_version_id=bom1.id, part_id=p2.id, qty_per_device=1, scrap_rate=Decimal("0.01")),
-        DeviceBomItem(bom_version_id=bom1.id, part_id=p3.id, qty_per_device=5, scrap_rate=Decimal("0.05")),
-        DeviceBomItem(bom_version_id=bom1.id, part_id=p5.id, qty_per_device=1, scrap_rate=Decimal("0")),
-        DeviceBomItem(bom_version_id=bom2.id, part_id=p1.id, qty_per_device=1, scrap_rate=Decimal("0.02")),
-        DeviceBomItem(bom_version_id=bom2.id, part_id=p2.id, qty_per_device=1, scrap_rate=Decimal("0.01")),
-        DeviceBomItem(bom_version_id=bom2.id, part_id=p6.id, qty_per_device=2, scrap_rate=Decimal("0.03")),
-        DeviceBomItem(bom_version_id=bom3.id, part_id=p1.id, qty_per_device=1, scrap_rate=Decimal("0.02")),
-        DeviceBomItem(bom_version_id=bom3.id, part_id=p2.id, qty_per_device=1, scrap_rate=Decimal("0.01")),
-        DeviceBomItem(bom_version_id=bom3.id, part_id=p7.id, qty_per_device=1, scrap_rate=Decimal("0")),
-        DeviceBomItem(bom_version_id=bom3.id, part_id=p4.id, qty_per_device=4, scrap_rate=Decimal("0.05")),
-    ])
+    # Phase 3: named orders for January / February / March
+    # Use first 2 simple devices + 1 composite device (has sub-devices in BOM) for variety
+    d1, bom1 = device_bom_pairs[0]
+    d2, bom2 = device_bom_pairs[min(1, len(device_bom_pairs) - 1)]
 
-    # Orders — январь / февраль / март: разные даты, приборы и прямые детали (для графиков и тестов)
+    # Find a composite device (BOM contains at least one sub-device entry)
+    composite_row = (await session.execute(
+        select(Device, DeviceBomVersion)
+        .join(DeviceBomVersion, (DeviceBomVersion.device_id == Device.id) & (DeviceBomVersion.status == "active"))
+        .where(exists(
+            select(DeviceBomItem.id).where(
+                DeviceBomItem.bom_version_id == DeviceBomVersion.id,
+                DeviceBomItem.sub_device_id.isnot(None),
+            )
+        ))
+        .order_by(Device.id)
+        .limit(1)
+    )).first()
+
+    if composite_row:
+        d3, bom3 = composite_row[0], composite_row[1]
+    else:
+        d3, bom3 = device_bom_pairs[min(2, len(device_bom_pairs) - 1)]
+
     o_jan1 = Order(order_date=date(2026, 1, 8), customer="ООО Альфа", contract_no="Д-2026-01", description="Январь: датчики и реле")
-    o_jan2 = Order(order_date=date(2026, 1, 15), customer="ООО Бета", contract_no="Д-2026-02", description="Январь: партия по блокам питания")
+    o_jan2 = Order(order_date=date(2026, 1, 15), customer="ООО Бета", contract_no="Д-2026-02", description="Январь: партия")
     o_jan3 = Order(order_date=date(2026, 1, 22), customer="АО Вектор", contract_no="Д-2026-03", description="Январь: смешанная партия")
     o_jan4 = Order(order_date=date(2026, 1, 28), customer="ООО Альфа", contract_no="Д-2026-04", description="Январь: только прямые детали")
     o_feb1 = Order(order_date=date(2026, 2, 5), customer="ООО Гамма", contract_no="Д-2026-05", description="Февраль: первая волна")
-    o_feb2 = Order(order_date=date(2026, 2, 12), customer="АО Вектор", contract_no="Д-2026-06", description="Февраль: реле отдельной строкой")
+    o_feb2 = Order(order_date=date(2026, 2, 12), customer="АО Вектор", contract_no="Д-2026-06", description="Февраль: второй прибор")
     o_feb3 = Order(order_date=date(2026, 2, 19), customer="ООО Бета", contract_no="Д-2026-07", description="Февраль: все три прибора")
     o_feb4 = Order(order_date=date(2026, 2, 26), customer="ООО Гамма", contract_no="Д-2026-08", description="Февраль: детали без приборов")
     o1 = Order(order_date=date(2026, 3, 1), customer="ООО Альфа", contract_no="Д-2026-09", description="Заказ для производства")
@@ -112,74 +110,55 @@ async def generate_test_data(session: AsyncSession) -> None:
     session.add_all([o_jan1, o_jan2, o_jan3, o_jan4, o_feb1, o_feb2, o_feb3, o_feb4, o1, o2])
     await session.flush()
 
-    # Позиции с прибором (активная BOM)
     session.add_all([
         # Январь
-        OrderItem(order_id=o_jan1.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("12"), price=Decimal("1520.00")),
-        OrderItem(order_id=o_jan1.id, device_id=d2.id, bom_version_id=bom2.id, qty=Decimal("6"), price=Decimal("790.00")),
-        OrderItem(order_id=o_jan2.id, device_id=d3.id, bom_version_id=bom3.id, qty=Decimal("4"), price=Decimal("2180.00")),
-        OrderItem(order_id=o_jan3.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("8"), price=Decimal("1510.00")),
-        OrderItem(order_id=o_jan3.id, device_id=d2.id, bom_version_id=bom2.id, qty=Decimal("3"), price=Decimal("805.00")),
-        OrderItem(order_id=o_jan3.id, device_id=d3.id, bom_version_id=bom3.id, qty=Decimal("2"), price=Decimal("2190.00")),
+        OrderItem(order_id=o_jan1.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("12"), price=Decimal("15000.00")),
+        OrderItem(order_id=o_jan1.id, device_id=d2.id, bom_version_id=bom2.id, qty=Decimal("6"), price=Decimal("18000.00")),
+        OrderItem(order_id=o_jan2.id, device_id=d3.id, bom_version_id=bom3.id, qty=Decimal("4"), price=Decimal("22000.00")),
+        OrderItem(order_id=o_jan3.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("8"), price=Decimal("15000.00")),
+        OrderItem(order_id=o_jan3.id, device_id=d2.id, bom_version_id=bom2.id, qty=Decimal("3"), price=Decimal("18000.00")),
+        OrderItem(order_id=o_jan3.id, device_id=d3.id, bom_version_id=bom3.id, qty=Decimal("2"), price=Decimal("22000.00")),
         # Февраль
-        OrderItem(order_id=o_feb1.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("15"), price=Decimal("1490.00")),
-        OrderItem(order_id=o_feb1.id, device_id=d3.id, bom_version_id=bom3.id, qty=Decimal("7"), price=Decimal("2210.00")),
-        OrderItem(order_id=o_feb2.id, device_id=d2.id, bom_version_id=bom2.id, qty=Decimal("11"), price=Decimal("795.00")),
-        OrderItem(order_id=o_feb3.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("5"), price=Decimal("1500.00")),
-        OrderItem(order_id=o_feb3.id, device_id=d2.id, bom_version_id=bom2.id, qty=Decimal("5"), price=Decimal("800.00")),
-        OrderItem(order_id=o_feb3.id, device_id=d3.id, bom_version_id=bom3.id, qty=Decimal("4"), price=Decimal("2200.00")),
-        # Март (как было)
-        OrderItem(order_id=o1.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("10"), price=Decimal("1500.00")),
-        OrderItem(order_id=o1.id, device_id=d2.id, bom_version_id=bom2.id, qty=Decimal("5"), price=Decimal("800.00")),
-        OrderItem(order_id=o2.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("20"), price=Decimal("1450.00")),
-        OrderItem(order_id=o2.id, device_id=d3.id, bom_version_id=bom3.id, qty=Decimal("3"), price=Decimal("2200.00")),
-    ])
-    # Прямые позиции деталей (без прибора)
-    session.add_all([
-        OrderPartItem(order_id=o_jan4.id, part_id=p3.id, qty=Decimal("200"), price=Decimal("2.50"), note="Резисторы оптом"),
-        OrderPartItem(order_id=o_jan4.id, part_id=p2.id, qty=Decimal("25"), price=Decimal("450.00")),
-        OrderPartItem(order_id=o_feb4.id, part_id=p1.id, qty=Decimal("40"), price=Decimal("85.00")),
-        OrderPartItem(order_id=o_feb4.id, part_id=p4.id, qty=Decimal("60"), price=Decimal("12.00"), note="Конденсаторы на склад"),
+        OrderItem(order_id=o_feb1.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("15"), price=Decimal("15000.00")),
+        OrderItem(order_id=o_feb1.id, device_id=d3.id, bom_version_id=bom3.id, qty=Decimal("7"), price=Decimal("22000.00")),
+        OrderItem(order_id=o_feb2.id, device_id=d2.id, bom_version_id=bom2.id, qty=Decimal("11"), price=Decimal("18000.00")),
+        OrderItem(order_id=o_feb3.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("5"), price=Decimal("15000.00")),
+        OrderItem(order_id=o_feb3.id, device_id=d2.id, bom_version_id=bom2.id, qty=Decimal("5"), price=Decimal("18000.00")),
+        OrderItem(order_id=o_feb3.id, device_id=d3.id, bom_version_id=bom3.id, qty=Decimal("4"), price=Decimal("22000.00")),
+        # Март
+        OrderItem(order_id=o1.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("10"), price=Decimal("15000.00")),
+        OrderItem(order_id=o1.id, device_id=d2.id, bom_version_id=bom2.id, qty=Decimal("5"), price=Decimal("18000.00")),
+        OrderItem(order_id=o2.id, device_id=d1.id, bom_version_id=bom1.id, qty=Decimal("20"), price=Decimal("14500.00")),
+        OrderItem(order_id=o2.id, device_id=d3.id, bom_version_id=bom3.id, qty=Decimal("3"), price=Decimal("22000.00")),
     ])
 
-    # Массовые заказы для проверки календарей, списков, поиска и месячной статистики.
+    # Прямые позиции деталей (без прибора)
+    if len(sample_parts) >= 4:
+        session.add_all([
+            OrderPartItem(order_id=o_jan4.id, part_id=sample_parts[2].id, qty=Decimal("200"), price=Decimal("2.50"), note="Прямая позиция"),
+            OrderPartItem(order_id=o_jan4.id, part_id=sample_parts[1].id, qty=Decimal("25"), price=Decimal("450.00")),
+            OrderPartItem(order_id=o_feb4.id, part_id=sample_parts[0].id, qty=Decimal("40"), price=Decimal("85.00")),
+            OrderPartItem(order_id=o_feb4.id, part_id=sample_parts[3].id, qty=Decimal("60"), price=Decimal("12.00")),
+        ])
+
+    # Phase 4: bulk orders for March and April (120 orders cycling through all imported devices)
     customers = [
-        "ООО Альфа",
-        "АО Вектор",
-        "ООО Бета",
-        "ООО Гамма",
-        "ЗАО Импульс",
-        "ООО Север",
-        "АО Контур",
-        "ООО Прогресс",
+        "ООО Альфа", "АО Вектор", "ООО Бета", "ООО Гамма",
+        "ЗАО Импульс", "ООО Север", "АО Контур", "ООО Прогресс",
     ]
-    device_configs = [
-        (d1, bom1, Decimal("1480.00")),
-        (d2, bom2, Decimal("820.00")),
-        (d3, bom3, Decimal("2240.00")),
-    ]
-    direct_parts = [
-        (p1, Decimal("92.00")),
-        (p2, Decimal("460.00")),
-        (p3, Decimal("2.70")),
-        (p4, Decimal("13.50")),
-        (p5, Decimal("310.00")),
-        (p6, Decimal("185.00")),
-        (p7, Decimal("720.00")),
-    ]
+    n = len(device_bom_pairs)
+
     bulk_orders: list[Order] = []
     for idx in range(120):
         month = 3 if idx < 60 else 4
-        month_label = "Март" if month == 3 else "Апрель"
         day = (idx % 28) + 1
-        bulk_orders.append(
-            Order(
-                order_date=date(2026, month, day),
-                customer=customers[idx % len(customers)],
-                contract_no=f"Д-2026-{idx + 11:03d}",
-                description=f"{month_label}: тестовый производственный заказ #{idx + 1}",
-            )
-        )
+        month_label = "Март" if month == 3 else "Апрель"
+        bulk_orders.append(Order(
+            order_date=date(2026, month, day),
+            customer=customers[idx % len(customers)],
+            contract_no=f"Д-2026-{idx + 11:03d}",
+            description=f"{month_label}: тестовый производственный заказ #{idx + 1}",
+        ))
 
     session.add_all(bulk_orders)
     await session.flush()
@@ -187,153 +166,87 @@ async def generate_test_data(session: AsyncSession) -> None:
     bulk_order_items: list[OrderItem] = []
     bulk_part_items: list[OrderPartItem] = []
     for idx, order in enumerate(bulk_orders):
-        device, bom, base_price = device_configs[idx % len(device_configs)]
+        device, bom = device_bom_pairs[idx % n]
         qty = Decimal(str((idx % 9) + 1))
-        bulk_order_items.append(
-            OrderItem(
-                order_id=order.id,
-                device_id=device.id,
-                bom_version_id=bom.id,
-                qty=qty,
-                price=base_price + Decimal(str((idx % 5) * 25)),
-            )
-        )
+        bulk_order_items.append(OrderItem(
+            order_id=order.id,
+            device_id=device.id,
+            bom_version_id=bom.id,
+            qty=qty,
+            price=Decimal("15000.00") + Decimal(str((idx % 5) * 500)),
+        ))
 
         if idx % 4 == 0:
-            second_device, second_bom, second_price = device_configs[(idx + 1) % len(device_configs)]
-            bulk_order_items.append(
-                OrderItem(
-                    order_id=order.id,
-                    device_id=second_device.id,
-                    bom_version_id=second_bom.id,
-                    qty=Decimal(str((idx % 4) + 1)),
-                    price=second_price,
-                )
-            )
+            second_device, second_bom = device_bom_pairs[(idx + 1) % n]
+            bulk_order_items.append(OrderItem(
+                order_id=order.id,
+                device_id=second_device.id,
+                bom_version_id=second_bom.id,
+                qty=Decimal(str((idx % 4) + 1)),
+                price=Decimal("15000.00"),
+            ))
 
-        if idx % 3 == 0:
-            part, price = direct_parts[idx % len(direct_parts)]
-            bulk_part_items.append(
-                OrderPartItem(
-                    order_id=order.id,
-                    part_id=part.id,
-                    qty=Decimal(str(((idx % 10) + 1) * 3)),
-                    price=price,
-                    note="Тестовая прямая позиция детали",
-                )
-            )
+        if idx % 3 == 0 and sample_parts:
+            part = sample_parts[idx % len(sample_parts)]
+            bulk_part_items.append(OrderPartItem(
+                order_id=order.id,
+                part_id=part.id,
+                qty=Decimal(str(((idx % 10) + 1) * 3)),
+                price=Decimal("250.00"),
+                note="Тестовая прямая позиция детали",
+            ))
 
     session.add_all(bulk_order_items + bulk_part_items)
     await session.flush()
 
-    # --- Composite device demo ---
-    # New parts used only in the composite device
-    p8 = Part(name="Модуль интерфейса", cipher="IF-001", article="ART-1008", description="RS-485/RS-232")
-    p9 = Part(name="Реле защиты", cipher="RZ-24V", article="ART-1009", description="24В защитное")
-    session.add_all([p8, p9])
-    await session.flush()
-
-    # Composite device: Контроллер КТ-200 (contains sub-devices d1 and d3 plus a direct part)
-    d4 = Device(primary_name="Контроллер КТ-200", model="KT-200", description="Составной контроллер — включает подприборы")
-    session.add(d4)
-    await session.flush()
-
-    bom4 = DeviceBomVersion(
-        device_id=d4.id, name="Спецификация v1",
-        description="Состав: 2× Датчик Т-100 + 1× Блок питания БП-12 + Модуль интерфейса",
-        version=1, status="active",
-    )
-    session.add(bom4)
-    await session.flush()
-
-    session.add_all([
-        # 2× sub-device Датчик Т-100 (d1, pinned to bom1)
-        DeviceBomItem(bom_version_id=bom4.id, sub_device_id=d1.id, sub_bom_version_id=bom1.id, qty_per_device=2),
-        # 1× sub-device Блок питания БП-12 (d3, pinned to bom3)
-        DeviceBomItem(bom_version_id=bom4.id, sub_device_id=d3.id, sub_bom_version_id=bom3.id, qty_per_device=1),
-        # 1× direct part Модуль интерфейса
-        DeviceBomItem(bom_version_id=bom4.id, part_id=p8.id, qty_per_device=1),
-    ])
-    await session.flush()
-
-    # Order for March 2026 with 3× KT-200
-    o_composite = Order(
-        order_date=date(2026, 3, 10),
-        customer="АО Прогресс",
-        contract_no="Д-2026-C01",
-        description="Март: составной контроллер КТ-200 (демо иерархического BOM)",
-    )
-    session.add(o_composite)
-    await session.flush()
-    session.add(OrderItem(
-        order_id=o_composite.id,
-        device_id=d4.id,
-        bom_version_id=bom4.id,
-        qty=Decimal("3"),
-        price=Decimal("9500.00"),
-    ))
-    await session.flush()
-    # --- end composite device demo ---
-
-    # Monthly plans (March and April 2026) generated from the larger order set.
+    # Phase 5: monthly plans
     plan = await generate_monthly_plan(session, date(2026, 3, 1), replace=True)
     april_plan = await generate_monthly_plan(session, date(2026, 4, 1), replace=True)
 
-    # 30 invoices for March and April: paid and unpaid examples for the calendar.
+    # Phase 6: 30 invoices for March and April
     suppliers = [
-        "ООО Поставщик",
-        "АО Комплект",
-        "ООО Метиз",
-        "ЗАО Электрон",
-        "ООО Пластик-Снаб",
-        "АО Кабель",
+        "ООО Поставщик", "АО Комплект", "ООО Метиз",
+        "ЗАО Электрон", "ООО Пластик-Снаб", "АО Кабель",
     ]
-    invoice_parts = [p1, p2, p3, p4, p5, p6, p7]
     invoices_bulk: list[Invoice] = []
     for idx in range(30):
         invoice_month = 3 if idx < 15 else 4
         invoice_day = (idx * 2 % 27) + 1
         payment_day = min(invoice_day + 4, 28)
-        invoices_bulk.append(
-            Invoice(
-                invoice_no=f"INV-2026-{idx + 1:03d}",
-                invoice_date=date(2026, invoice_month, invoice_day),
-                supplier=suppliers[idx % len(suppliers)],
-                total_amount=Decimal(str(18000 + idx * 1375)) + Decimal("0.50"),
-                payment_date=date(2026, invoice_month, payment_day) if idx % 3 != 1 else None,
-                description=f"Тестовый счёт за {'март' if invoice_month == 3 else 'апрель'} #{idx + 1}",
-            )
-        )
+        invoices_bulk.append(Invoice(
+            invoice_no=f"INV-2026-{idx + 1:03d}",
+            invoice_date=date(2026, invoice_month, invoice_day),
+            supplier=suppliers[idx % len(suppliers)],
+            total_amount=Decimal(str(18000 + idx * 1375)) + Decimal("0.50"),
+            payment_date=date(2026, invoice_month, payment_day) if idx % 3 != 1 else None,
+            description=f"Тестовый счёт за {'март' if invoice_month == 3 else 'апрель'} #{idx + 1}",
+        ))
 
     session.add_all(invoices_bulk)
     await session.flush()
 
-    invoice_links: list[InvoicePartLink] = []
-    for idx, invoice in enumerate(invoices_bulk):
-        target_plan = plan if invoice.invoice_date.month == 3 else april_plan
-        part = invoice_parts[idx % len(invoice_parts)]
-        invoice_links.append(
-            InvoicePartLink(
+    if sample_parts:
+        invoice_links: list[InvoicePartLink] = []
+        for idx, invoice in enumerate(invoices_bulk):
+            target_plan = plan if invoice.invoice_date.month == 3 else april_plan
+            part = sample_parts[idx % len(sample_parts)]
+            invoice_links.append(InvoicePartLink(
                 invoice_id=invoice.id,
                 plan_id=target_plan.id,
                 part_id=part.id,
                 qty_covered=Decimal(str((idx % 12) + 4)),
-            )
-        )
-        if idx % 5 == 0:
-            extra_part = invoice_parts[(idx + 2) % len(invoice_parts)]
-            invoice_links.append(
-                InvoicePartLink(
+            ))
+            if idx % 5 == 0:
+                extra_part = sample_parts[(idx + 2) % len(sample_parts)]
+                invoice_links.append(InvoicePartLink(
                     invoice_id=invoice.id,
                     plan_id=target_plan.id,
                     part_id=extra_part.id,
                     qty_covered=Decimal(str((idx % 7) + 2)),
-                )
-            )
+                ))
+        session.add_all(invoice_links)
 
-    session.add_all(invoice_links)
-
-    # Вложения счетов (байты в Postgres, общий шаблон для каждого демо-счёта)
+    # Invoice attachments
     sample_base = _SEED_ATTACHMENT.read_bytes()
     for inv in invoices_bulk:
         data = sample_base + b"\n---\nInvoice: " + inv.invoice_no.encode() + b"\n"
@@ -344,5 +257,3 @@ async def generate_test_data(session: AsyncSession) -> None:
             content_type="text/plain; charset=utf-8",
         )
         session.add(InvoiceFile(invoice_id=inv.id, file_id=db_file.id, role="original"))
-
-    return None

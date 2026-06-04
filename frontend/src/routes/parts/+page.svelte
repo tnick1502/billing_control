@@ -130,6 +130,14 @@
     saveExpanded();
   }
 
+  $: anyGroupExpanded = groupKeys.some((k) => expanded[k] !== false);
+
+  function toggleAllGroups() {
+    const next = !anyGroupExpanded;
+    expanded = Object.fromEntries(groupKeys.map((k) => [k, next]));
+    saveExpanded();
+  }
+
   function filterTypeOptions(types: string[], query: string): string[] {
     const needle = query.trim().toLowerCase();
     if (!needle) return types;
@@ -232,6 +240,19 @@
   {:else if filteredParts.length === 0}
     <div class="rounded-xl border border-zinc-700 px-4 py-6 text-center text-zinc-400">Ничего не найдено.</div>
   {:else}
+    <div class="mb-3 flex justify-end">
+      <button
+        type="button"
+        on:click={toggleAllGroups}
+        class="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-700 hover:text-white transition-colors"
+      >
+        {#if anyGroupExpanded}
+          <span class="text-[10px] leading-none">▴▾</span> Свернуть все
+        {:else}
+          <span class="text-[10px] leading-none">▾▴</span> Развернуть все
+        {/if}
+      </button>
+    </div>
     <div class="space-y-4">
       {#each groupKeys as key (key)}
         <div class="overflow-hidden rounded-xl border border-zinc-700">
@@ -241,11 +262,11 @@
             on:keydown={(e) => handleGroupKeydown(e, key)}
             class="flex w-full items-center gap-2 bg-surface-800 px-4 py-3 text-left hover:bg-zinc-800"
           >
-            <span class="text-zinc-400 text-xs">{isExpanded(key) ? '▾' : '▸'}</span>
+            <span class="text-zinc-400 text-xs">{expanded[key] !== false ? '▾' : '▸'}</span>
             <span class="font-medium text-white">{key}</span>
             <span class="text-xs text-zinc-400">({groupedParts[key].length})</span>
           </button>
-          {#if isExpanded(key)}
+          {#if expanded[key] !== false}
             <div class="overflow-x-auto">
               <table class="w-full">
                 <thead class="bg-zinc-900 text-zinc-400 text-left">

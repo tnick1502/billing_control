@@ -131,6 +131,7 @@ async def orders_parts_monthly_timeseries(
         .join(DeviceBomItem, DeviceBomItem.bom_version_id == OrderItem.bom_version_id)
         .where(
             OrderItem.bom_version_id.isnot(None),
+            DeviceBomItem.part_id.isnot(None),
             Order.order_date >= date_from,
             Order.order_date <= date_to,
         )

@@ -82,7 +82,7 @@
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { position: 'top', labels: { color: '#d4d4d8' } },
+        legend: { display: false },
         title: { display: true, text: title, color: '#fafafa', font: { size: 14 } },
       },
       scales: {
@@ -313,6 +313,20 @@
     }
   }
 
+  $: legendDeviceDatasets = devicePayload
+    ? devicePayload.datasets.filter((ds) => {
+        const id = ds.device_id;
+        return typeof id === 'number' && selectedDeviceIds.includes(id);
+      })
+    : [];
+
+  $: legendPartDatasets = partPayload
+    ? partPayload.datasets.filter((ds) => {
+        const id = ds.part_id;
+        return typeof id === 'number' && selectedPartIds.includes(id);
+      })
+    : [];
+
   onMount(() => {
     (async () => {
       const { from: mf, to: mt } = defaultMonthRange();
@@ -398,6 +412,18 @@
     <div class="h-80 w-full" class:hidden={devicesEmpty && !loadingDevices && !deviceError}>
       <canvas bind:this={deviceCanvas} class="w-full h-full"></canvas>
     </div>
+    {#if legendDeviceDatasets.length > 0}
+      <div class="mt-3 max-h-32 overflow-y-auto rounded-lg border border-zinc-700/50 bg-zinc-900/40 px-3 py-2">
+        <div class="flex flex-wrap gap-x-5 gap-y-1.5">
+          {#each legendDeviceDatasets as ds}
+            <div class="flex min-w-0 items-center gap-2">
+              <span class="h-0.5 w-5 shrink-0 rounded-full" style="background-color: {ds.borderColor ?? '#888'}"></span>
+              <span class="truncate text-xs text-zinc-300" title={ds.label}>{ds.label}</span>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
   </section>
 
   <section class="bg-surface-800 border border-zinc-700 rounded-xl p-6">
@@ -447,6 +473,18 @@
     <div class="h-80 w-full" class:hidden={partSeriesEmpty && !loadingPart && !partError}>
       <canvas bind:this={partCanvas} class="w-full h-full"></canvas>
     </div>
+    {#if legendPartDatasets.length > 0}
+      <div class="mt-3 max-h-32 overflow-y-auto rounded-lg border border-zinc-700/50 bg-zinc-900/40 px-3 py-2">
+        <div class="flex flex-wrap gap-x-5 gap-y-1.5">
+          {#each legendPartDatasets as ds}
+            <div class="flex min-w-0 items-center gap-2">
+              <span class="h-0.5 w-5 shrink-0 rounded-full" style="background-color: {ds.borderColor ?? '#888'}"></span>
+              <span class="truncate text-xs text-zinc-300" title={ds.label}>{ds.label}</span>
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
   </section>
 </div>
 
