@@ -115,33 +115,86 @@ async def _ensure_invoice_files_composite_pk_postgresql(conn) -> None:
 
 # PostgreSQL (docker / prod)
 _PG_STATEMENTS = [
+    # --- devices ---
     "ALTER TABLE devices ADD COLUMN IF NOT EXISTS description TEXT",
+    "ALTER TABLE devices ADD COLUMN IF NOT EXISTS model VARCHAR(128)",
+    "ALTER TABLE devices ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT false",
     "ALTER TABLE devices DROP COLUMN IF EXISTS is_active",
+
+    # --- parts ---
     "ALTER TABLE parts ADD COLUMN IF NOT EXISTS description TEXT",
     "ALTER TABLE parts ADD COLUMN IF NOT EXISTS cipher VARCHAR(128)",
     "ALTER TABLE parts ADD COLUMN IF NOT EXISTS article VARCHAR(128)",
+    "ALTER TABLE parts ADD COLUMN IF NOT EXISTS part_type VARCHAR(128)",
+    "ALTER TABLE parts ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT false",
     "ALTER TABLE parts DROP COLUMN IF EXISTS is_active",
+    "ALTER TABLE parts DROP COLUMN IF EXISTS uom",
+
+    # --- orders ---
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS description TEXT",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer VARCHAR(255)",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS contract_no VARCHAR(128)",
     "ALTER TABLE orders DROP COLUMN IF EXISTS status",
+
+    # --- order_items ---
+    "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS price NUMERIC(18,2)",
+    "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS note TEXT",
+
+    # --- order_part_items ---
+    "ALTER TABLE order_part_items ADD COLUMN IF NOT EXISTS price NUMERIC(18,2)",
+    "ALTER TABLE order_part_items ADD COLUMN IF NOT EXISTS note TEXT",
+
+    # --- device_bom_versions ---
     "ALTER TABLE device_bom_versions ADD COLUMN IF NOT EXISTS description TEXT",
+    "ALTER TABLE device_bom_versions ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ NOT NULL DEFAULT now()",
+    "ALTER TABLE device_bom_versions ADD COLUMN IF NOT EXISTS valid_to TIMESTAMPTZ",
+
+    # --- device_bom_items ---
+    "ALTER TABLE device_bom_items ALTER COLUMN qty_per_device TYPE INTEGER USING ROUND(qty_per_device)::integer",
+    "ALTER TABLE device_bom_items ALTER COLUMN part_id DROP NOT NULL",
+    "ALTER TABLE device_bom_items ADD COLUMN IF NOT EXISTS sub_device_id INTEGER REFERENCES devices(id) ON DELETE CASCADE",
+    "ALTER TABLE device_bom_items ADD COLUMN IF NOT EXISTS sub_bom_version_id INTEGER REFERENCES device_bom_versions(id) ON DELETE SET NULL",
+    "ALTER TABLE device_bom_items ADD COLUMN IF NOT EXISTS scrap_rate NUMERIC(10,6)",
+    "ALTER TABLE device_bom_items ADD COLUMN IF NOT EXISTS note TEXT",
+
+    # --- monthly_plans ---
+    "ALTER TABLE monthly_plans ADD COLUMN IF NOT EXISTS generated_by VARCHAR(128)",
+    "ALTER TABLE monthly_plans ADD COLUMN IF NOT EXISTS note TEXT",
+
+    # --- monthly_plan_parts ---
+    "ALTER TABLE monthly_plan_parts ADD COLUMN IF NOT EXISTS qty_delivered NUMERIC(18,6) NOT NULL DEFAULT 0",
+    # qty_final: NOT NULL — DEFAULT 0 для обратной совместимости; пересчитывается при generate_monthly_plan
+    "ALTER TABLE monthly_plan_parts ADD COLUMN IF NOT EXISTS qty_final NUMERIC(18,6) NOT NULL DEFAULT 0",
+
+    # --- invoices ---
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS description TEXT",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS supplier VARCHAR(255)",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS note TEXT",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_date DATE",
     "ALTER TABLE invoices DROP COLUMN IF EXISTS currency",
     "ALTER TABLE invoices DROP COLUMN IF EXISTS status",
+
+    # --- invoice_part_links ---
     "ALTER TABLE invoice_part_links DROP COLUMN IF EXISTS amount_allocated",
     "ALTER TABLE invoice_part_links ADD COLUMN IF NOT EXISTS is_carryover BOOLEAN NOT NULL DEFAULT false",
-    "ALTER TABLE parts DROP COLUMN IF EXISTS uom",
-    "ALTER TABLE monthly_plan_parts ADD COLUMN IF NOT EXISTS qty_delivered NUMERIC(18,6) NOT NULL DEFAULT 0",
-    "ALTER TABLE device_bom_items ALTER COLUMN qty_per_device TYPE INTEGER USING ROUND(qty_per_device)::integer",
-    "ALTER TABLE parts ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT false",
-    "ALTER TABLE devices ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT false",
-    "ALTER TABLE device_bom_items ALTER COLUMN part_id DROP NOT NULL",
-    "ALTER TABLE device_bom_items ADD COLUMN IF NOT EXISTS sub_device_id INTEGER REFERENCES devices(id) ON DELETE CASCADE",
-    "ALTER TABLE device_bom_items ADD COLUMN IF NOT EXISTS sub_bom_version_id INTEGER REFERENCES device_bom_versions(id) ON DELETE SET NULL",
+    "ALTER TABLE invoice_part_links ADD COLUMN IF NOT EXISTS note TEXT",
+    "ALTER TABLE invoice_part_links ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()",
+
+    # --- invoice_files ---
+    "ALTER TABLE invoice_files ADD COLUMN IF NOT EXISTS role VARCHAR(32) NOT NULL DEFAULT 'original'",
+
+    # --- users ---
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name VARCHAR(255)",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS session_token VARCHAR(128)",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()",
+
+    # --- audit_logs ---
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS username VARCHAR(64)",
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS role VARCHAR(32)",
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS method VARCHAR(16)",
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS path VARCHAR(512)",
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS status_code INTEGER",
+    "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS details TEXT",
 ]
 
 # Вложения: таблица байтов и приведение старых колонок files к текущей модели (если были)
@@ -154,6 +207,9 @@ _PG_FILES_BYTEA_MIGRATION = [
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS filename VARCHAR(512)",
     "UPDATE files SET filename = 'legacy.bin' WHERE filename IS NULL",
     "ALTER TABLE files ALTER COLUMN filename SET NOT NULL",
+    "ALTER TABLE files ADD COLUMN IF NOT EXISTS content_type VARCHAR(128)",
+    "ALTER TABLE files ADD COLUMN IF NOT EXISTS size_bytes BIGINT",
+    "ALTER TABLE files ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMPTZ NOT NULL DEFAULT now()",
     "ALTER TABLE files DROP CONSTRAINT IF EXISTS uq_files_bucket_key",
     "ALTER TABLE files DROP COLUMN IF EXISTS storage",
     "ALTER TABLE files DROP COLUMN IF EXISTS bucket",
