@@ -30,6 +30,8 @@
   let partItemModalOpen = false;
   let partItemForm: OrderPartItemCreate = { part_id: 0, qty: '1', price: null, note: null };
   let editingPartItemId: number | null = null;
+  let deviceSearchQuery = '';
+  let partSearchQueryOrder = '';
   let calendarMonth = monthKey(new Date());
   let selectedDayDate: string | null = null;
   let viewMode: 'calendar' | 'list' = 'calendar';
@@ -45,6 +47,8 @@
   const PAGE_SIZE = 50;
   const weekDays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
+  $: filteredDevicesForOrder = filterDevicesForOrder(deviceSearchQuery);
+  $: filteredPartsForOrder = filterPartsForOrder(partSearchQueryOrder);
   $: calendarDays = buildCalendarDays(calendarMonth, orders);
   $: calendarMonthLabel = monthLabel(calendarMonth);
   $: selectedDayOrders = selectedDayDate ? ordersForDate(selectedDayDate) : [];
@@ -280,14 +284,16 @@
   async function openAddItem() {
     if (!selectedOrder) return;
     editingItemId = null;
-    itemForm = { device_id: devices[0]?.id ?? 0, bom_version_id: null, qty: '1', price: null, note: null };
+    itemForm = { device_id: 0, bom_version_id: null, qty: '1', price: null, note: null };
+    deviceSearchQuery = '';
     itemModalOpen = true;
-    setBomsForDeviceAndDefault();
+    bomsForDevice = [];
   }
 
   async function openEditItem(item: OrderItem) {
     editingItemId = item.id;
     itemForm = { device_id: item.device_id, bom_version_id: item.bom_version_id ?? null, qty: item.qty, price: item.price, note: item.note };
+    deviceSearchQuery = devices.find((d) => d.id === item.device_id)?.primary_name ?? '';
     itemModalOpen = true;
     setBomsForDeviceAndDefault();
   }
@@ -345,13 +351,15 @@
   function openAddPartItem() {
     if (!selectedOrder) return;
     editingPartItemId = null;
-    partItemForm = { part_id: parts[0]?.id ?? 0, qty: '1', price: null, note: null };
+    partItemForm = { part_id: 0, qty: '1', price: null, note: null };
+    partSearchQueryOrder = '';
     partItemModalOpen = true;
   }
 
   function openEditPartItem(item: OrderPartItem) {
     editingPartItemId = item.id;
     partItemForm = { part_id: item.part_id, qty: item.qty, price: item.price, note: item.note };
+    partSearchQueryOrder = parts.find((p) => p.id === item.part_id)?.name ?? '';
     partItemModalOpen = true;
   }
 
@@ -388,6 +396,18 @@
     } catch (e) {
       alert((e as Error).message);
     }
+  }
+
+  function filterDevicesForOrder(query: string) {
+    const q = query.trim().toLowerCase();
+    if (!q) return devices.slice(0, 40);
+    return devices.filter((d) => d.primary_name.toLowerCase().includes(q)).slice(0, 40);
+  }
+
+  function filterPartsForOrder(query: string) {
+    const q = query.trim().toLowerCase();
+    if (!q) return parts.slice(0, 40);
+    return parts.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 40);
   }
 
   function deviceName(id: number) {
@@ -772,25 +792,41 @@
 
 {#if itemModalOpen && selectedOrder}
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[70]" on:click={() => itemModalOpen = false} role="button" tabindex="0">
-    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
+    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700 max-h-[90vh] overflow-y-auto" on:click|stopPropagation role="dialog">
       <h2 class="text-lg font-semibold text-white mb-4">{editingItemId ? 'Редактировать' : 'Добавить'} прибор</h2>
       <form on:submit|preventDefault={saveItem} class="space-y-4">
         <div>
-          <label class="block text-sm text-zinc-400 mb-1">Прибор</label>
-          <select
-            value={itemForm.device_id}
-            on:change={handleDeviceChangeInItem}
-            class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
-            required
-          >
-            {#if devices.length === 0}
-              <option value="" disabled>Нет приборов — добавьте в разделе «Приборы»</option>
-            {:else}
-              {#each devices as d}
-                <option value={d.id}>{d.primary_name}</option>
-              {/each}
-            {/if}
-          </select>
+          <label class="block text-sm text-zinc-400 mb-1">Прибор <span class="text-red-400">*</span></label>
+          {#if editingItemId}
+            <div class="px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-zinc-300 text-sm">{deviceName(itemForm.device_id)}</div>
+          {:else}
+            <input
+              type="search"
+              bind:value={deviceSearchQuery}
+              placeholder="Поиск по названию"
+              class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
+            />
+            <div class="mt-2 rounded-lg border border-zinc-700 bg-zinc-950/70">
+              <div class="border-b border-zinc-800 px-3 py-2 text-xs text-zinc-400">
+                Выбрано: <span class="text-zinc-100">{itemForm.device_id ? deviceName(itemForm.device_id) : 'Прибор не выбран'}</span>
+              </div>
+              <div class="max-h-48 overflow-y-auto p-1">
+                {#if filteredDevicesForOrder.length === 0}
+                  <div class="px-3 py-2 text-sm text-zinc-500">Приборы не найдены</div>
+                {:else}
+                  {#each filteredDevicesForOrder as d}
+                    <button
+                      type="button"
+                      on:click={() => { itemForm.device_id = d.id; onDeviceChangeInItem(); }}
+                      class="block w-full rounded-md px-3 py-2 text-left text-sm {itemForm.device_id === d.id ? 'bg-emerald-500/20 text-emerald-200' : 'text-zinc-200 hover:bg-zinc-800'}"
+                    >
+                      {d.primary_name}
+                    </button>
+                  {/each}
+                {/if}
+              </div>
+            </div>
+          {/if}
         </div>
         {#if bomsForDevice.length > 0}
           <div>
@@ -827,20 +863,41 @@
 
 {#if partItemModalOpen && selectedOrder}
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-[70]" on:click={() => partItemModalOpen = false} role="button" tabindex="0">
-    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
+    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700 max-h-[90vh] overflow-y-auto" on:click|stopPropagation role="dialog">
       <h2 class="text-lg font-semibold text-white mb-4">{editingPartItemId ? 'Редактировать' : 'Добавить'} деталь</h2>
       <form on:submit|preventDefault={savePartItem} class="space-y-4">
         <div>
-          <label class="block text-sm text-zinc-400 mb-1">Деталь</label>
-          <select bind:value={partItemForm.part_id} class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" required>
-            {#if parts.length === 0}
-              <option value="" disabled>Нет деталей — добавьте в разделе «Детали»</option>
-            {:else}
-              {#each parts as p}
-                <option value={p.id}>{p.name}</option>
-              {/each}
-            {/if}
-          </select>
+          <label class="block text-sm text-zinc-400 mb-1">Деталь <span class="text-red-400">*</span></label>
+          {#if editingPartItemId}
+            <div class="px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-zinc-300 text-sm">{partName(partItemForm.part_id)}</div>
+          {:else}
+            <input
+              type="search"
+              bind:value={partSearchQueryOrder}
+              placeholder="Поиск по названию"
+              class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
+            />
+            <div class="mt-2 rounded-lg border border-zinc-700 bg-zinc-950/70">
+              <div class="border-b border-zinc-800 px-3 py-2 text-xs text-zinc-400">
+                Выбрано: <span class="text-zinc-100">{partItemForm.part_id ? partName(partItemForm.part_id) : 'Деталь не выбрана'}</span>
+              </div>
+              <div class="max-h-48 overflow-y-auto p-1">
+                {#if filteredPartsForOrder.length === 0}
+                  <div class="px-3 py-2 text-sm text-zinc-500">Детали не найдены</div>
+                {:else}
+                  {#each filteredPartsForOrder as p}
+                    <button
+                      type="button"
+                      on:click={() => { partItemForm.part_id = p.id; }}
+                      class="block w-full rounded-md px-3 py-2 text-left text-sm {partItemForm.part_id === p.id ? 'bg-amber-500/20 text-amber-200' : 'text-zinc-200 hover:bg-zinc-800'}"
+                    >
+                      {p.name}
+                    </button>
+                  {/each}
+                {/if}
+              </div>
+            </div>
+          {/if}
         </div>
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Кол-во</label>

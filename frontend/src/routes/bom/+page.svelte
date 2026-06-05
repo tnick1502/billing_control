@@ -30,6 +30,7 @@
 
   $: filteredParts = filterParts(partSearchQuery);
   $: filteredSubDevices = filterSubDevices(subDeviceSearchQuery);
+  $: groupedBomItems = groupBomItems(bomItems, parts);
 
   onMount(load);
 
@@ -255,6 +256,24 @@
     return b ? `v${b.version}${b.name ? ` · ${b.name}` : ''} (${statusLabel(b.status)})` : `BOM #${bomId}`;
   }
 
+  function groupBomItems(items: BomItem[], partsList: Part[]) {
+    const subDevices = items.filter((i) => i.item_type === 'sub_device');
+    const partItems = items.filter((i) => i.item_type === 'part');
+    const byType = new Map<string, BomItem[]>();
+    for (const item of partItems) {
+      const part = partsList.find((p) => p.id === item.part_id);
+      const key = part?.part_type?.trim() || 'Прочие';
+      if (!byType.has(key)) byType.set(key, []);
+      byType.get(key)!.push(item);
+    }
+    const groups: { label: string; items: BomItem[]; isSubDevice: boolean }[] = [];
+    if (subDevices.length > 0) groups.push({ label: 'Подприборы', items: subDevices, isSubDevice: true });
+    for (const [label, typeItems] of [...byType.entries()].sort((a, b) => a[0].localeCompare(b[0], 'ru'))) {
+      groups.push({ label, items: typeItems, isSubDevice: false });
+    }
+    return groups;
+  }
+
   function itemRowLabel(item: BomItem): string {
     if (item.item_type === 'sub_device') return deviceName(item.sub_device_id);
     if (item.part_id) return partLabel(parts.find((p) => p.id === item.part_id)) || String(item.part_id);
@@ -330,39 +349,44 @@
         {#if selectedBom}
           <div>
             <button on:click={openAddItem} class="mb-4 px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 text-sm">+ Добавить компонент</button>
-            <table class="w-full rounded-xl border border-zinc-700 overflow-hidden">
-              <thead class="bg-surface-800 text-zinc-400 text-left">
-                <tr>
-                  <th class="px-4 py-3 font-medium">Компонент</th>
-                  <th class="px-4 py-3 font-medium">Тип</th>
-                  <th class="px-4 py-3 font-medium">Кол-во на прибор</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-zinc-800">
-                {#each bomItems as i}
-                  <tr
-                    class="cursor-pointer hover:bg-zinc-800/50"
-                    role="button"
-                    tabindex="0"
-                    on:click={() => openEditItem(i)}
-                    on:keydown={(event) => handleItemRowKeydown(event, i)}
-                  >
-                    <td class="px-4 py-3">{itemRowLabel(i)}</td>
-                    <td class="px-4 py-3">
-                      {#if i.item_type === 'sub_device'}
-                        <span class="px-2 py-0.5 text-xs rounded bg-blue-600/30 text-blue-300 border border-blue-500/30">Подприбор</span>
-                      {:else}
-                        <span class="px-2 py-0.5 text-xs rounded bg-zinc-700 text-zinc-400">Деталь</span>
-                      {/if}
-                    </td>
-                    <td class="px-4 py-3 font-mono">{i.qty_per_device}</td>
-                  </tr>
+            {#if bomItems.length === 0}
+              <div class="rounded-xl border border-zinc-700 px-4 py-6 text-center text-zinc-500">
+                Нет компонентов. Добавьте деталь или подприбор.
+              </div>
+            {:else}
+              <div class="space-y-4">
+                {#each groupedBomItems as group}
+                  <div class="rounded-xl border border-zinc-700 overflow-hidden">
+                    <div class="px-4 py-2 text-xs font-semibold uppercase tracking-wide {group.isSubDevice ? 'bg-blue-950/60 text-blue-300 border-b border-blue-800/50' : 'bg-zinc-900 text-zinc-400 border-b border-zinc-700'}">
+                      {group.label}
+                      <span class="ml-2 font-normal normal-case tracking-normal text-zinc-500">{group.items.length} поз.</span>
+                    </div>
+                    <table class="w-full">
+                      <thead class="bg-surface-800 text-zinc-400 text-left">
+                        <tr>
+                          <th class="px-4 py-2 font-medium text-sm">Компонент</th>
+                          <th class="px-4 py-2 font-medium text-sm">Кол-во на прибор</th>
+                        </tr>
+                      </thead>
+                      <tbody class="divide-y divide-zinc-800">
+                        {#each group.items as i}
+                          <tr
+                            class="cursor-pointer hover:bg-zinc-800/50"
+                            role="button"
+                            tabindex="0"
+                            on:click={() => openEditItem(i)}
+                            on:keydown={(event) => handleItemRowKeydown(event, i)}
+                          >
+                            <td class="px-4 py-3">{itemRowLabel(i)}</td>
+                            <td class="px-4 py-3 font-mono">{i.qty_per_device}</td>
+                          </tr>
+                        {/each}
+                      </tbody>
+                    </table>
+                  </div>
                 {/each}
-                {#if bomItems.length === 0}
-                  <tr><td colspan="3" class="px-4 py-6 text-center text-zinc-500">Нет компонентов. Добавьте деталь или подприбор.</td></tr>
-                {/if}
-              </tbody>
-            </table>
+              </div>
+            {/if}
           </div>
         {/if}
       {:else}
