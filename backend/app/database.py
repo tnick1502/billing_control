@@ -10,14 +10,23 @@ log = logging.getLogger(__name__)
 
 
 def _db_connect_args() -> dict:
+    # asyncpg: timeout — установка соединения, command_timeout — на один запрос.
+    # Без них запрос к недоступной/медленной БД висит бесконечно (отсюда зависания всей витрины).
+    args: dict = {
+        "timeout": settings.db_connect_timeout,
+        "command_timeout": settings.db_command_timeout,
+        "server_settings": {"application_name": "billing_control"},
+    }
     if not settings.database_ssl:
-        return {}
+        return args
     if settings.database_ssl_verify:
-        return {"ssl": True}
+        args["ssl"] = True
+        return args
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-    return {"ssl": ctx}
+    args["ssl"] = ctx
+    return args
 
 
 engine = create_async_engine(
@@ -25,10 +34,10 @@ engine = create_async_engine(
     connect_args=_db_connect_args(),
     echo=False,
     pool_pre_ping=True,
-    pool_recycle=3600,
-    pool_size=10,
-    max_overflow=20,
-    pool_timeout=60,
+    pool_recycle=settings.db_pool_recycle,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    pool_timeout=settings.db_pool_timeout,
 )
 
 async_session_maker = async_sessionmaker(

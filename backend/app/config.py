@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     database_ssl: bool = False
     database_ssl_verify: bool = True
 
+    # Таймауты и пул для удалённой БД: чтобы запросы падали быстро, а не висели бесконечно.
+    db_connect_timeout: int = 10   # сек на установку соединения с БД
+    db_command_timeout: int = 30   # сек на один запрос
+    db_pool_size: int = 5          # постоянных соединений в пуле (на воркер)
+    db_max_overflow: int = 5       # сверх пула под пик
+    db_pool_timeout: int = 10      # сек ждать свободное соединение, затем ошибка
+    db_pool_recycle: int = 1800    # сек, пересоздавать соединение (managed-БД закрывает простаивающие)
+
     public_origin: str | None = None
     cors_origins: str = "http://localhost:5173,http://localhost:3000,http://localhost"
     seed_on_startup: bool = True

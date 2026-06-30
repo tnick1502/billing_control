@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 import logging
 
@@ -112,14 +113,18 @@ app.include_router(imports.router)
 app.include_router(stats.router)
 
 
+async def _check_db() -> None:
+    async with async_session_maker() as session:
+        await session.execute(text("SELECT 1"))
+
+
 @app.get("/health")
 async def health():
-    """Liveness + проверка доступности БД, чтобы оркестратор замечал деградацию хранилища."""
+    """Liveness + проверка доступности БД. Жёсткий таймаут, чтобы healthcheck не висел при недоступной БД."""
     try:
-        async with async_session_maker() as session:
-            await session.execute(text("SELECT 1"))
+        await asyncio.wait_for(_check_db(), timeout=3)
     except Exception:
-        logging.getLogger(__name__).exception("health: БД недоступна")
+        logging.getLogger(__name__).warning("health: БД недоступна или не отвечает за 3с")
         return JSONResponse(status_code=503, content={"status": "degraded", "db": "down"})
     return {"status": "ok"}
 
