@@ -133,23 +133,28 @@ async def _resolve_session(session: AsyncSession, token: str) -> tuple[User, Use
     if expires_at.tzinfo is None:
         expires_at = expires_at.replace(tzinfo=timezone.utc)
     if expires_at <= _now():
-        # Просрочена — подчищаем и считаем недействительной.
-        await session.execute(delete(UserSession).where(UserSession.id == user_session.id))
+        # Просрочена — считаем недействительной. Строку не удаляем здесь (это была бы запись
+        # на горячем пути); просроченные сессии подчищаются при логине/логауте и фоном.
         return None
     return user, user_session
 
 
-async def _maybe_renew(session: AsyncSession, user_session: UserSession) -> None:
-    """Скользящее продление: переносим срок жизни, но не чаще порога, чтобы не писать в БД на каждом запросе."""
+async def _maybe_renew(session: AsyncSession, user_session: UserSession) -> bool:
+    """Скользящее продление. Возвращает True, только если реально продлили (и тогда нужен commit).
+
+    На горячем пути (каждый запрос) НИЧЕГО не пишем: запись в БД делается не чаще порога
+    ``session_idle_renew_minutes`` — иначе на удалённой БД каждый запрос тормозит из-за коммита.
+    """
     now = _now()
     last_used = user_session.last_used_at
     if last_used.tzinfo is None:
         last_used = last_used.replace(tzinfo=timezone.utc)
     if (now - last_used) < timedelta(minutes=settings.session_idle_renew_minutes):
-        return
+        return False
     user_session.last_used_at = now
     user_session.expires_at = now + timedelta(hours=settings.session_ttl_hours)
-    await session.flush()
+    await session.commit()
+    return True
 
 
 async def ensure_default_users() -> None:
@@ -224,10 +229,12 @@ async def auth_middleware(request: Request, call_next: Callable[[Request], Await
     if scheme.lower() != "bearer" or not token:
         return JSONResponse(status_code=401, content={"detail": "Требуется авторизация"})
 
+    # Авторизация — короткая сессия: один SELECT и сразу освобождаем соединение в пул
+    # ДО выполнения хендлера (который откроет своё соединение). Иначе на удалённой БД
+    # каждое соединение держится весь запрос → пул быстро исчерпывается, отсюда тормоза и сбросы.
     async with async_session_maker() as session:
         resolved = await _resolve_session(session, token)
         if not resolved:
-            await session.commit()  # зафиксировать чистку просроченной сессии, если была
             return JSONResponse(status_code=401, content={"detail": "Сессия недействительна"})
         user, user_session = resolved
 
@@ -241,23 +248,25 @@ async def auth_middleware(request: Request, call_next: Callable[[Request], Await
                 content={"detail": "Это действие доступно только администратору"},
             )
 
+        # Запись в БД только если реально пора продлить сессию (не на каждом запросе).
         await _maybe_renew(session, user_session)
-        await session.commit()
+    # Соединение возвращено в пул здесь. user остаётся пригоден (expire_on_commit=False).
 
-        request.state.user = user
-        request.state.session_token = token
-        response = await call_next(request)
+    request.state.user = user
+    request.state.session_token = token
+    response = await call_next(request)
 
-        if method not in SAFE_METHODS and path != "/auth/logout":
-            try:
-                status = getattr(response, "status_code", None) or 200
-                await write_audit_log(session, user, method, path, status)
-            except Exception:
-                # Счёт/файл уже закоммичены в своей сессии; не превращаем сбой аудита в 500 для клиента
-                log.exception(
-                    "audit_logs: не удалось записать запись аудита (%s %s); ответ клиенту без изменений",
-                    method,
-                    path,
-                )
+    if method not in SAFE_METHODS and path != "/auth/logout":
+        try:
+            status = getattr(response, "status_code", None) or 200
+            async with async_session_maker() as audit_session:
+                await write_audit_log(audit_session, user, method, path, status)
+        except Exception:
+            # Счёт/файл уже закоммичены в своей сессии; не превращаем сбой аудита в 500 для клиента
+            log.exception(
+                "audit_logs: не удалось записать запись аудита (%s %s); ответ клиенту без изменений",
+                method,
+                path,
+            )
 
-        return response
+    return response
