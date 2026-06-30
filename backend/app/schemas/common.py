@@ -411,9 +411,9 @@ class FileRead(BaseModel):
 class InvoicePartLinkCreate(BaseModel):
     plan_id: int
     part_id: int
-    # Количество, покрываемое счётом по этой детали, обязательно и строго положительно:
-    # привязка без количества не имеет смысла для расчёта покрытия/переносов.
-    qty_covered: Decimal = Field(gt=0)
+    # Необязательно (пустое = не задано), но если указано — строго положительно
+    # (ноль/отрицательное бессмысленны для покрытия и отклоняются).
+    qty_covered: Decimal | None = Field(default=None, gt=0)
     note: str | None = None
 
 

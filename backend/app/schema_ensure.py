@@ -199,6 +199,27 @@ _PG_STATEMENTS = [
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS details TEXT",
 ]
 
+# Индексы по внешним ключам/частым фильтрам. PostgreSQL НЕ индексирует FK автоматически —
+# без этого на удалённой БД растущие таблицы дают seq-scan (медленные планы/счета/статистика).
+# Все CREATE INDEX IF NOT EXISTS идемпотентны.
+_PG_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS ix_order_items_order_id ON order_items (order_id)",
+    "CREATE INDEX IF NOT EXISTS ix_order_items_bom_version_id ON order_items (bom_version_id)",
+    "CREATE INDEX IF NOT EXISTS ix_order_items_device_id ON order_items (device_id)",
+    "CREATE INDEX IF NOT EXISTS ix_order_part_items_order_id ON order_part_items (order_id)",
+    "CREATE INDEX IF NOT EXISTS ix_order_part_items_part_id ON order_part_items (part_id)",
+    "CREATE INDEX IF NOT EXISTS ix_orders_order_date ON orders (order_date)",
+    "CREATE INDEX IF NOT EXISTS ix_invoice_part_links_plan_id ON invoice_part_links (plan_id)",
+    "CREATE INDEX IF NOT EXISTS ix_invoice_part_links_part_id ON invoice_part_links (part_id)",
+    "CREATE INDEX IF NOT EXISTS ix_invoice_part_links_invoice_id ON invoice_part_links (invoice_id)",
+    "CREATE INDEX IF NOT EXISTS ix_monthly_plan_devices_bom_version_id ON monthly_plan_devices (bom_version_id)",
+    "CREATE INDEX IF NOT EXISTS ix_device_bom_items_sub_bom_version_id ON device_bom_items (sub_bom_version_id)",
+    "CREATE INDEX IF NOT EXISTS ix_user_sessions_expires_at ON user_sessions (expires_at)",
+    # Поиск по file_id (составной PK ведёт по другому столбцу): удаление файлов-сирот и проверка доступа к скачиванию.
+    "CREATE INDEX IF NOT EXISTS ix_invoice_files_file_id ON invoice_files (file_id)",
+    "CREATE INDEX IF NOT EXISTS ix_monthly_plan_part_files_file_id ON monthly_plan_part_files (file_id)",
+]
+
 # Вложения: таблица байтов и приведение старых колонок files к текущей модели (если были)
 _PG_FILES_BYTEA_MIGRATION = [
     """CREATE TABLE IF NOT EXISTS file_contents (
@@ -264,7 +285,7 @@ async def ensure_schema() -> None:
         log.warning("schema_ensure: пропуск для dialect=%s", dialect)
         return
 
-    statements = list(_PG_STATEMENTS) + _PG_FILES_BYTEA_MIGRATION
+    statements = list(_PG_STATEMENTS) + _PG_FILES_BYTEA_MIGRATION + _PG_INDEXES
     failures: list[str] = []
     async with engine.begin() as conn:
         for sql in statements:
