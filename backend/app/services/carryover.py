@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -27,6 +27,20 @@ from app.models import (
 log = logging.getLogger(__name__)
 
 ZERO = Decimal("0")
+
+# Произвольный фиксированный ключ для pg_advisory_xact_lock: сериализует генерацию планов
+# и пересчёт переносов между собой, чтобы конкурентные запросы не ломали уникальные ограничения.
+CARRYOVER_LOCK_KEY = 478223901
+
+
+async def acquire_carryover_lock(session: AsyncSession) -> None:
+    """Взять транзакционную advisory-блокировку (PostgreSQL). На sqlite — no-op.
+
+    Блокировка держится до конца транзакции (commit/rollback), повторный вызов в той же
+    транзакции безопасен. Любой конкурентный писатель ждёт здесь, а не падает на дубле.
+    """
+    if session.bind is not None and session.bind.dialect.name == "postgresql":
+        await session.execute(text("SELECT pg_advisory_xact_lock(:k)").bindparams(k=CARRYOVER_LOCK_KEY))
 
 
 @dataclass
@@ -67,18 +81,19 @@ async def compute_carryover(session: AsyncSession) -> CarryoverResult:
     if not plan_ids:
         return result
 
-    # Потребность: part_id -> { month -> qty_required }
+    # Потребность берём из qty_final — это итоговая потребность к закупке (с учётом ручной
+    # корректировки плановиком); по умолчанию qty_final == qty_required.
     required: dict[int, dict[date, Decimal]] = {}
     parts_res = await session.execute(
-        select(MonthlyPlanPart.plan_id, MonthlyPlanPart.part_id, MonthlyPlanPart.qty_required).where(
+        select(MonthlyPlanPart.plan_id, MonthlyPlanPart.part_id, MonthlyPlanPart.qty_final).where(
             MonthlyPlanPart.plan_id.in_(plan_ids)
         )
     )
-    for plan_id, part_id, qty_required in parts_res.all():
+    for plan_id, part_id, qty_final in parts_res.all():
         month = month_by_plan.get(plan_id)
         if month is None:
             continue
-        required.setdefault(part_id, {})[month] = Decimal(qty_required)
+        required.setdefault(part_id, {})[month] = Decimal(qty_final)
 
     # Ручные привязки счетов: part_id -> { month -> [(invoice_date, invoice_id, qty_covered)] }
     manual: dict[int, dict[date, list[tuple[date, int, Decimal]]]] = {}
@@ -162,7 +177,13 @@ async def compute_carryover(session: AsyncSession) -> CarryoverResult:
 
 
 async def recompute_carryover_links(session: AsyncSession) -> None:
-    """Пересобрать авто-привязки переноса остатков по всем планам."""
+    """Пересобрать авто-привязки переноса остатков по всем планам.
+
+    Полностью сериализовано advisory-блокировкой: конкурентные изменения счетов/планов
+    выстраиваются в очередь, а не наступают друг на друга (иначе — гонки и нарушение
+    уникального ограничения invoice_part_links).
+    """
+    await acquire_carryover_lock(session)
     await session.execute(delete(InvoicePartLink).where(InvoicePartLink.is_carryover.is_(True)))
     await session.flush()
 

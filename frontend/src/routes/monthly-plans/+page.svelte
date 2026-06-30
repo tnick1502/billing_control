@@ -57,6 +57,9 @@
   let deliverDraft: Record<number, string> = {};
   let savingDeliveredId: number | null = null;
 
+  let finalDraft: Record<number, string> = {};
+  let savingFinalId: number | null = null;
+
   let uploadingFilesPartId: number | null = null;
   let planPartFileInputs: Record<number, HTMLInputElement> = {};
 
@@ -84,10 +87,13 @@
 
   function refreshDeliverDrafts() {
     const d: Record<number, string> = {};
+    const f: Record<number, string> = {};
     selectedPlanDetail?.parts?.forEach((p) => {
       d[p.id] = formatIntegerQty(p.qty_delivered);
+      f[p.id] = formatIntegerQty(p.qty_final);
     });
     deliverDraft = d;
+    finalDraft = f;
   }
 
   onMount(() => {
@@ -200,12 +206,16 @@
     }
   }
 
+  function effectiveTarget(p: MonthlyPlanPartWithCoverage): number {
+    return Number(p.qty_final ?? p.qty_required);
+  }
+
   async function submitDelivered(planId: number, row: MonthlyPlanPartWithCoverage) {
     const raw = deliverDraft[row.id] ?? formatIntegerQty(row.qty_delivered);
     const v = Math.round(Number(raw));
-    const max = Number(row.qty_required);
+    const max = effectiveTarget(row);
     if (!Number.isFinite(v) || v < 0 || v > max) {
-      alert(`Введите целое от 0 до ${formatIntegerQty(row.qty_required)}`);
+      alert(`Введите целое от 0 до ${formatIntegerQty(String(max))}`);
       return;
     }
     savingDeliveredId = row.id;
@@ -216,6 +226,24 @@
       alert((e as Error).message);
     } finally {
       savingDeliveredId = null;
+    }
+  }
+
+  async function submitFinal(planId: number, row: MonthlyPlanPartWithCoverage) {
+    const raw = finalDraft[row.id] ?? formatIntegerQty(row.qty_final);
+    const v = Math.round(Number(raw));
+    if (!Number.isFinite(v) || v < 0) {
+      alert('Введите целое ≥ 0');
+      return;
+    }
+    savingFinalId = row.id;
+    try {
+      await api.monthlyPlans.updatePlanPartFinal(planId, row.id, String(v));
+      await load({ quiet: true });
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      savingFinalId = null;
     }
   }
 
@@ -340,12 +368,12 @@
 
   function deliveryOk(p: MonthlyPlanPartWithCoverage) {
     if (p.delivery_complete != null) return p.delivery_complete;
-    return Number(p.qty_delivered ?? 0) >= Number(p.qty_required);
+    return Number(p.qty_delivered ?? 0) >= effectiveTarget(p);
   }
 
   function coverageOk(p: MonthlyPlanPartWithCoverage) {
     if (p.coverage_complete != null) return p.coverage_complete;
-    return Number(p.qty_covered_total ?? 0) >= Number(p.qty_required);
+    return Number(p.qty_covered_total ?? 0) >= effectiveTarget(p);
   }
 
   async function toggleInvoiceDetails(inv: PartInvoiceCoverage) {
@@ -398,7 +426,8 @@
     const next: Record<number, string> = {};
     for (const pid of partIds) {
       const row = planPart(planId, pid);
-      const remaining = Math.max(Number(row?.qty_required ?? 0) - Number(row?.qty_covered_total ?? 0), 0);
+      const target = row ? effectiveTarget(row) : 0;
+      const remaining = Math.max(target - Number(row?.qty_covered_total ?? 0), 0);
       next[pid] = formatIntegerQty(remaining);
     }
     return next;
@@ -736,7 +765,7 @@
                 <tr>
                   <th class="px-4 py-3 font-medium">ID</th>
                   <th class="px-4 py-3 font-medium">Деталь</th>
-                  <th class="px-4 py-3 font-medium">Требуется</th>
+                  <th class="px-4 py-3 font-medium">Итого к закупке</th>
                   <th class="px-4 py-3 font-medium">Покрытие счетами</th>
                   <th class="px-4 py-3 font-medium">Поставлено</th>
                 </tr>
@@ -746,7 +775,34 @@
                   <tr class="hover:bg-zinc-800/30">
                     <td class="px-4 py-3 font-mono text-sm align-top">{partId(p.part_id) ?? '—'}</td>
                     <td class="px-4 py-3 align-top">{partName(p.part_id)}</td>
-                    <td class="px-4 py-3 font-mono align-top">{formatQty(p.qty_required)}</td>
+                    <td class="px-4 py-3 align-top">
+                      <div class="flex flex-wrap items-center gap-1.5">
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          value={finalDraft[p.id] ?? ''}
+                          on:input={(e) => {
+                            const el = e.currentTarget;
+                            if (el instanceof HTMLInputElement) {
+                              finalDraft = { ...finalDraft, [p.id]: el.value };
+                            }
+                          }}
+                          class="w-24 px-2 py-1.5 bg-zinc-900 border border-zinc-600 rounded text-white text-sm font-mono"
+                        />
+                        <button
+                          type="button"
+                          disabled={savingFinalId === p.id}
+                          on:click={() => submitFinal(currentPlanId, p)}
+                          class="px-2 py-1.5 bg-zinc-600 text-white rounded text-xs hover:bg-zinc-500 disabled:opacity-50"
+                        >
+                          {savingFinalId === p.id ? '…' : 'Сохранить'}
+                        </button>
+                      </div>
+                      {#if Number(p.qty_final) !== Number(p.qty_required)}
+                        <div class="mt-1 text-[10px] text-zinc-500">расчёт по заказам: <span class="font-mono">{formatIntegerQty(p.qty_required)}</span></div>
+                      {/if}
+                    </td>
                     <td class="px-4 py-3 align-top">
                       <div
                         class="mb-1 rounded border px-2 py-1 text-[11px] {coverageOk(p)
@@ -754,7 +810,7 @@
                           : 'bg-red-500/15 border-red-500/40 text-red-200'}"
                       >
                         Покрыто: <span class="font-mono">{formatIntegerQty(p.qty_covered_total)}</span>
-                        из <span class="font-mono">{formatIntegerQty(p.qty_required)}</span>
+                        из <span class="font-mono">{formatIntegerQty(p.qty_final)}</span>
                       </div>
                       {#if p.has_invoice}
                         <ul class="mt-2 space-y-1.5 text-[11px]">
@@ -864,13 +920,13 @@
                       {:else}
                         <div class="flex flex-wrap items-end gap-2">
                           <div>
-                            <label class="sr-only" for="del-{p.id}">Поставлено из {p.qty_required}</label>
+                            <label class="sr-only" for="del-{p.id}">Поставлено из {p.qty_final}</label>
                             <input
                               id="del-{p.id}"
                               type="number"
                               step="1"
                               min="0"
-                              max={Number(p.qty_required)}
+                              max={effectiveTarget(p)}
                               value={deliverDraft[p.id] ?? ''}
                               on:input={(e) => {
                                 const el = e.currentTarget;
@@ -880,7 +936,7 @@
                               }}
                               class="w-28 px-2 py-1.5 bg-zinc-900 border border-zinc-600 rounded text-white text-sm font-mono"
                             />
-                            <span class="text-zinc-500 text-xs ml-1">из {formatIntegerQty(p.qty_required)}</span>
+                            <span class="text-zinc-500 text-xs ml-1">из {formatIntegerQty(p.qty_final)}</span>
                           </div>
                           <button
                             type="button"

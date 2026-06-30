@@ -154,7 +154,8 @@ _PG_STATEMENTS = [
     "ALTER TABLE device_bom_items ALTER COLUMN part_id DROP NOT NULL",
     "ALTER TABLE device_bom_items ADD COLUMN IF NOT EXISTS sub_device_id INTEGER REFERENCES devices(id) ON DELETE CASCADE",
     "ALTER TABLE device_bom_items ADD COLUMN IF NOT EXISTS sub_bom_version_id INTEGER REFERENCES device_bom_versions(id) ON DELETE SET NULL",
-    "ALTER TABLE device_bom_items ADD COLUMN IF NOT EXISTS scrap_rate NUMERIC(10,6)",
+    # scrap_rate удалён из модели — выкидываем колонку, если осталась от старой схемы.
+    "ALTER TABLE device_bom_items DROP COLUMN IF EXISTS scrap_rate",
     "ALTER TABLE device_bom_items ADD COLUMN IF NOT EXISTS note TEXT",
 
     # --- monthly_plans ---
@@ -185,7 +186,8 @@ _PG_STATEMENTS = [
 
     # --- users ---
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name VARCHAR(255)",
-    "ALTER TABLE users ADD COLUMN IF NOT EXISTS session_token VARCHAR(128)",
+    # session_token больше не используется — сессии вынесены в таблицу user_sessions (только хэш токена).
+    "ALTER TABLE users DROP COLUMN IF EXISTS session_token",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()",
 
     # --- audit_logs ---
@@ -246,20 +248,36 @@ async def _ensure_bom_subdev_unique(conn) -> None:
 
 
 async def ensure_schema() -> None:
+    """Привести существующую PostgreSQL-схему к текущим моделям.
+
+    Все выражения идемпотентны (IF EXISTS / IF NOT EXISTS / приведение к тому же типу),
+    поэтому в норме не падают. Если хоть одно упало — это реальная проблема схемы:
+    собираем ВСЕ ошибки, логируем и поднимаем исключение, чтобы приложение НЕ стартовало
+    с полу-мигрированной БД (раньше ошибки молча проглатывались — отсюда тихая порча данных).
+
+    Для sqlite (тесты) ALTER-миграции не нужны: схему целиком создаёт ``create_all`` по моделям.
+    """
     dialect = engine.dialect.name
-    if dialect not in ("postgresql", "sqlite"):
+    if dialect == "sqlite":
+        return
+    if dialect != "postgresql":
         log.warning("schema_ensure: пропуск для dialect=%s", dialect)
         return
 
-    statements = list(_PG_STATEMENTS)
-    if dialect == "postgresql":
-        statements = statements + _PG_FILES_BYTEA_MIGRATION
+    statements = list(_PG_STATEMENTS) + _PG_FILES_BYTEA_MIGRATION
+    failures: list[str] = []
     async with engine.begin() as conn:
         for sql in statements:
             try:
                 await conn.execute(text(sql))
-            except Exception as e:
-                log.warning("schema_ensure: %s — %s", sql, e)
-        if dialect == "postgresql":
-            await _ensure_invoice_files_composite_pk_postgresql(conn)
-            await _ensure_bom_subdev_unique(conn)
+            except Exception as e:  # noqa: BLE001 — копим все ошибки, чтобы показать разом
+                log.error("schema_ensure: НЕ выполнено: %s — %s", sql, e)
+                failures.append(f"{sql} -> {e}")
+        await _ensure_invoice_files_composite_pk_postgresql(conn)
+        await _ensure_bom_subdev_unique(conn)
+
+    if failures:
+        raise RuntimeError(
+            "schema_ensure: не удалось привести схему БД к моделям; приложение остановлено. "
+            f"Проблемные операции ({len(failures)}): " + " | ".join(failures)
+        )

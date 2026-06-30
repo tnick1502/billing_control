@@ -21,16 +21,16 @@ class UserLogin(BaseModel):
 
 
 class UserCreate(BaseModel):
-    username: str
-    password: str
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=6, max_length=128)
     full_name: str | None = None
     role: str = "employee"
     is_active: bool = True
 
 
 class UserUpdate(BaseModel):
-    username: str | None = None
-    password: str | None = None
+    username: str | None = Field(default=None, min_length=1, max_length=64)
+    password: str | None = Field(default=None, min_length=6, max_length=128)
     full_name: str | None = None
     role: str | None = None
     is_active: bool | None = None
@@ -163,28 +163,28 @@ class OrderRead(OrderBase):
 class OrderItemCreate(BaseModel):
     device_id: int
     bom_version_id: int | None = None  # Default: active BOM for device
-    qty: Decimal
-    price: Decimal | None = None
+    qty: Decimal = Field(gt=0)
+    price: Decimal | None = Field(default=None, ge=0)
     note: str | None = None
 
 
 class OrderItemUpdate(BaseModel):
     bom_version_id: int | None = None
-    qty: Decimal | None = None
-    price: Decimal | None = None
+    qty: Decimal | None = Field(default=None, gt=0)
+    price: Decimal | None = Field(default=None, ge=0)
     note: str | None = None
 
 
 class OrderPartItemCreate(BaseModel):
     part_id: int
-    qty: Decimal
-    price: Decimal | None = None
+    qty: Decimal = Field(gt=0)
+    price: Decimal | None = Field(default=None, ge=0)
     note: str | None = None
 
 
 class OrderPartItemUpdate(BaseModel):
-    qty: Decimal | None = None
-    price: Decimal | None = None
+    qty: Decimal | None = Field(default=None, gt=0)
+    price: Decimal | None = Field(default=None, ge=0)
     note: str | None = None
 
 
@@ -256,7 +256,6 @@ class BomItemCreate(BaseModel):
     sub_device_id: int | None = None
     sub_bom_version_id: int | None = None
     qty_per_device: int = Field(ge=1)
-    scrap_rate: Decimal | None = None
     note: str | None = None
 
     @model_validator(mode="after")
@@ -272,7 +271,6 @@ class BomItemCreate(BaseModel):
 
 class BomItemUpdate(BaseModel):
     qty_per_device: int | None = Field(None, ge=1)
-    scrap_rate: Decimal | None = None
     note: str | None = None
 
 
@@ -283,7 +281,6 @@ class BomItemRead(BaseModel):
     sub_device_id: int | None
     sub_bom_version_id: int | None
     qty_per_device: int
-    scrap_rate: Decimal | None
     note: str | None
     item_type: str
 
@@ -350,6 +347,19 @@ class MonthlyPlanPartQtyDeliveredUpdate(BaseModel):
     qty_delivered: Decimal = Field(ge=0)
 
 
+class MonthlyPlanPartUpdate(BaseModel):
+    """Ручная корректировка строки плана: итоговая потребность и/или фактически поставлено."""
+
+    qty_final: Decimal | None = Field(default=None, ge=0)
+    qty_delivered: Decimal | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def at_least_one(self) -> "MonthlyPlanPartUpdate":
+        if self.qty_final is None and self.qty_delivered is None:
+            raise ValueError("Укажите qty_final и/или qty_delivered")
+        return self
+
+
 class InvoiceBase(BaseModel):
     invoice_no: str
     invoice_date: date
@@ -401,12 +411,14 @@ class FileRead(BaseModel):
 class InvoicePartLinkCreate(BaseModel):
     plan_id: int
     part_id: int
-    qty_covered: Decimal | None = None
+    # Количество, покрываемое счётом по этой детали, обязательно и строго положительно:
+    # привязка без количества не имеет смысла для расчёта покрытия/переносов.
+    qty_covered: Decimal = Field(gt=0)
     note: str | None = None
 
 
 class InvoicePartLinkUpdate(BaseModel):
-    qty_covered: Decimal | None = None
+    qty_covered: Decimal | None = Field(default=None, gt=0)
     note: str | None = None
 
 

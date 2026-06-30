@@ -4,13 +4,21 @@ from fastapi import UploadFile
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models import File, FileContent, InvoiceFile, MonthlyPlanPartFile
+
+
+def _check_size(num_bytes: int) -> None:
+    limit = settings.max_upload_mb * 1024 * 1024
+    if num_bytes > limit:
+        raise ValueError(f"Файл слишком большой (> {settings.max_upload_mb} МБ)")
 
 
 async def save_upload_as_file(session: AsyncSession, upload: UploadFile) -> File:
     body = await upload.read()
     if not body:
         raise ValueError("Файл пустой")
+    _check_size(len(body))
     name = (upload.filename or "document").strip() or "document"
     db = File(
         filename=name,

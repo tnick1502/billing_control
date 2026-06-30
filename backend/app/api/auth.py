@@ -1,28 +1,56 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import ADMIN_ROLE, hash_password, make_token, normalize_role, require_admin, verify_password, write_audit_log
+from app.auth import (
+    ADMIN_ROLE,
+    create_session,
+    delete_session_by_token,
+    hash_password,
+    normalize_role,
+    require_admin,
+    verify_password,
+    write_audit_log,
+)
 from app.database import get_db
-from app.models import AuditLog, User
+from app.login_guard import client_key, login_guard
+from app.models import AuditLog, User, UserSession
 from app.schemas.common import AuditLogRead, AuthToken, UserCreate, UserLogin, UserRead, UserUpdate
 
 router = APIRouter(tags=["auth"])
 
 
+def _client_ip(request: Request) -> str | None:
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+
 @router.post("/auth/login", response_model=AuthToken)
-async def login(data: UserLogin, session: AsyncSession = Depends(get_db)):
+async def login(data: UserLogin, request: Request, session: AsyncSession = Depends(get_db)):
+    key = client_key(_client_ip(request), data.username)
+    retry_after = login_guard.retry_after(key)
+    if retry_after:
+        await write_audit_log(session, None, "POST", "/auth/login", 429, f"Блокировка перебора: {data.username}")
+        raise HTTPException(
+            status_code=429,
+            detail="Слишком много неудачных попыток входа. Повторите позже.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     result = await session.execute(select(User).where(User.username == data.username))
     user = result.scalar_one_or_none()
     if not user or not user.is_active or not verify_password(data.password, user.password):
+        login_guard.record_failure(key)
         await write_audit_log(session, user, "POST", "/auth/login", 401, f"Неуспешный вход: {data.username}")
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
 
-    user.session_token = make_token()
-    await session.flush()
+    login_guard.record_success(key)
+    token = await create_session(session, user)
     await session.refresh(user)
     await write_audit_log(session, user, "POST", "/auth/login", 200, "Вход в систему")
-    return {"token": user.session_token, "user": user}
+    return {"token": token, "user": user}
 
 
 @router.get("/auth/me", response_model=UserRead)
@@ -32,10 +60,8 @@ async def me(request: Request):
 
 @router.post("/auth/logout", status_code=204)
 async def logout(request: Request, session: AsyncSession = Depends(get_db)):
-    user = await session.get(User, request.state.user.id)
-    if user:
-        user.session_token = None
-        await session.flush()
+    token = getattr(request.state, "session_token", "")
+    await delete_session_by_token(session, token)
     return None
 
 
@@ -89,6 +115,10 @@ async def update_user(
 
     for key, value in update_data.items():
         setattr(user, key, value)
+
+    # Смена пароля или деактивация — немедленно отзываем все активные сессии пользователя.
+    if ("password" in update_data) or (update_data.get("is_active") is False):
+        await session.execute(delete(UserSession).where(UserSession.user_id == user.id))
 
     await session.flush()
     await session.refresh(user)

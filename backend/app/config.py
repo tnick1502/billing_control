@@ -29,6 +29,18 @@ class Settings(BaseSettings):
     force_reseed: bool = False
     wipe_db: bool = False
 
+    # Сессии: скользящий срок жизни токена и порог продления (чтобы не писать в БД на каждом запросе).
+    session_ttl_hours: int = 12
+    session_idle_renew_minutes: int = 30
+
+    # Защита логина от перебора (in-process, на один воркер uvicorn).
+    login_max_failures: int = 5
+    login_failure_window_minutes: int = 5
+    login_lockout_minutes: int = 15
+
+    # Ограничение размера загружаемого вложения.
+    max_upload_mb: int = 25
+
     @field_validator("database_ssl", "database_ssl_verify", "seed_on_startup", "force_reseed", "wipe_db", mode="before")
     @classmethod
     def coerce_env_bool_fields(cls, v: object) -> object:

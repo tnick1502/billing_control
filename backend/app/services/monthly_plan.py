@@ -18,29 +18,30 @@ from app.models import (
     MonthlyPlanDevice,
     MonthlyPlanPart,
 )
+from app.services.carryover import acquire_carryover_lock
 
 log = logging.getLogger(__name__)
 
 
-async def _expand_bom(
-    session: AsyncSession,
+def _expand_bom(
     bom_id: int,
     multiplier: Decimal,
     part_totals: dict[int, Decimal],
     bom_by_device: dict[int, "DeviceBomVersion"],
     first_bom_by_device: dict[int, "DeviceBomVersion"],
     ancestor_device_ids: frozenset[int],
+    items_by_bom: dict[int, list["DeviceBomItem"]],
 ) -> None:
     """Recursively expand a BOM version into a flat map of part_id → total_qty.
 
     Sub-device items are expanded recursively. Cycle detection is done via
     ancestor_device_ids — if a device_id is already in the ancestor chain,
     that branch is skipped to avoid infinite recursion.
+
+    ``items_by_bom`` — позиции всех спецификаций, загруженные одним запросом заранее,
+    поэтому рекурсия не делает SELECT на каждый узел дерева (устранён N+1).
     """
-    items_result = await session.execute(
-        select(DeviceBomItem).where(DeviceBomItem.bom_version_id == bom_id)
-    )
-    for item in items_result.scalars().all():
+    for item in items_by_bom.get(bom_id, []):
         qty = Decimal(item.qty_per_device) * multiplier
 
         if item.part_id is not None:
@@ -70,14 +71,14 @@ async def _expand_bom(
                     )
                 sub_bom_id = sub_bom.id
 
-            await _expand_bom(
-                session,
+            _expand_bom(
                 sub_bom_id,
                 qty,
                 part_totals,
                 bom_by_device,
                 first_bom_by_device,
                 ancestor_device_ids | {item.sub_device_id},
+                items_by_bom,
             )
 
 
@@ -87,12 +88,17 @@ async def generate_monthly_plan(
     replace: bool = True,
 ) -> MonthlyPlan:
     """Generate monthly plan from orders for the given month."""
+    # Сериализуем с пересчётом переносов и другими генерациями, чтобы не ловить гонки.
+    await acquire_carryover_lock(session)
+
     first_day = date(month.year, month.month, 1)
     _, last_day_num = monthrange(month.year, month.month)
     last_day = date(month.year, month.month, last_day_num)
 
-    # При replace: сохранить «поставлено» и привязки счетов, затем удалить старые планы месяца
+    # При replace: сохранить «поставлено», ручные правки qty_final и привязки счетов,
+    # затем удалить старые планы месяца.
     delivered_by_part: dict[int, Decimal] = {}
+    final_override_by_part: dict[int, Decimal] = {}
     links_snapshot: list[tuple[int, int, Decimal | None, str | None]] = []
 
     if replace:
@@ -105,6 +111,9 @@ async def generate_monthly_plan(
             for pp in pp_res.scalars().all():
                 prev = delivered_by_part.get(pp.part_id, Decimal("0"))
                 delivered_by_part[pp.part_id] = max(prev, pp.qty_delivered)
+                # Ручная правка итоговой потребности (qty_final != qty_required) — сохраняем и переносим.
+                if pp.qty_final != pp.qty_required:
+                    final_override_by_part[pp.part_id] = pp.qty_final
 
             lk_res = await session.execute(
                 select(
@@ -174,6 +183,12 @@ async def generate_monthly_plan(
         if b.device_id not in first_bom_by_device:
             first_bom_by_device[b.device_id] = b
 
+    # Загружаем позиции ВСЕХ спецификаций одним запросом (устранение N+1 при рекурсии по BOM).
+    all_items_result = await session.execute(select(DeviceBomItem))
+    items_by_bom: dict[int, list[DeviceBomItem]] = {}
+    for it in all_items_result.scalars().all():
+        items_by_bom.setdefault(it.bom_version_id, []).append(it)
+
     # Aggregate by (device_id, bom_version_id)
     device_bom_totals: dict[tuple[int, int], Decimal] = {}
     for oi in order_items:
@@ -209,30 +224,32 @@ async def generate_monthly_plan(
             )
         )
         # Recursively expand BOM (handles sub-devices at any nesting depth)
-        await _expand_bom(
-            session,
+        _expand_bom(
             bom_id,
             qty_total,
             part_totals,
             bom_by_device,
             first_bom_by_device,
             frozenset({device_id}),
+            items_by_bom,
         )
 
     # Add direct part orders to part_totals
     for part_id, qty in direct_part_totals.items():
         part_totals[part_id] = part_totals.get(part_id, Decimal("0")) + qty
 
-    # Create monthly_plan_parts (поставлено переносим с прошлого плана, не больше нового «требуется»)
+    # Create monthly_plan_parts. qty_final = ручная правка прошлого плана (если была), иначе qty_required.
+    # «Поставлено» переносим с прошлого плана, но не больше итоговой потребности qty_final.
     for part_id, qty_required in part_totals.items():
+        qty_final = final_override_by_part.get(part_id, qty_required)
         prev_del = delivered_by_part.get(part_id, Decimal("0"))
-        qty_del = min(prev_del, qty_required)
+        qty_del = min(prev_del, qty_final)
         session.add(
             MonthlyPlanPart(
                 plan_id=plan.id,
                 part_id=part_id,
                 qty_required=qty_required,
-                qty_final=qty_required,
+                qty_final=qty_final,
                 qty_delivered=qty_del,
             )
         )

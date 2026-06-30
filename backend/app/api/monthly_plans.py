@@ -17,7 +17,7 @@ from app.schemas.common import (
     MonthlyPlanGenerate,
     MonthlyPlanDeviceRead,
     MonthlyPlanPartRead,
-    MonthlyPlanPartQtyDeliveredUpdate,
+    MonthlyPlanPartUpdate,
 )
 from app.services.carryover import compute_carryover, recompute_carryover_links
 from app.services.file_storage import delete_orphaned_files, save_upload_as_file
@@ -167,13 +167,18 @@ async def list_plan_parts(plan_id: int, session: AsyncSession = Depends(get_db))
 
 
 @router.patch("/{plan_id}/parts/{plan_part_id}", response_model=MonthlyPlanPartRead)
-async def update_plan_part_qty_delivered(
+async def update_plan_part(
     plan_id: int,
     plan_part_id: int,
-    data: MonthlyPlanPartQtyDeliveredUpdate,
+    data: MonthlyPlanPartUpdate,
     session: AsyncSession = Depends(get_db),
 ):
-    """Фактически поставленное количество по строке плана (0 … требуется)."""
+    """Ручная корректировка строки плана (только админ — путь вне /invoices).
+
+    - ``qty_final`` — итоговая потребность к закупке (по умолчанию = расчётной qty_required).
+      Изменение влияет на покрытие, переносы остатков и допустимый максимум «поставлено».
+    - ``qty_delivered`` — фактически поставлено (0 … qty_final).
+    """
     result = await session.execute(
         select(MonthlyPlanPart).where(
             MonthlyPlanPart.id == plan_part_id,
@@ -183,11 +188,24 @@ async def update_plan_part_qty_delivered(
     row = result.scalar_one_or_none()
     if not row:
         raise HTTPException(404, "Строка плана не найдена")
-    q = data.qty_delivered
-    if q < 0 or q > row.qty_required:
-        raise HTTPException(400, "Поставлено должно быть от 0 до «Требуется»")
-    row.qty_delivered = q
+
+    final_changed = False
+    if data.qty_final is not None:
+        row.qty_final = data.qty_final
+        final_changed = True
+        # «Поставлено» не может превышать новую итоговую потребность.
+        if row.qty_delivered > row.qty_final:
+            row.qty_delivered = row.qty_final
+
+    if data.qty_delivered is not None:
+        if data.qty_delivered > row.qty_final:
+            raise HTTPException(400, "Поставлено должно быть от 0 до «Итого к закупке»")
+        row.qty_delivered = data.qty_delivered
+
     await session.flush()
+    # Изменение итоговой потребности меняет расчёт переносов — пересобираем авто-привязки.
+    if final_changed:
+        await recompute_carryover_links(session)
     await session.refresh(row)
     return row
 
@@ -321,7 +339,8 @@ async def list_plan_parts_with_coverage(plan_id: int, session: AsyncSession = De
     out = []
     for p in parts:
         qty_del = p.qty_delivered
-        req = p.qty_required
+        # Эффективная потребность — итоговая (qty_final), а не исходная расчётная (qty_required).
+        req = p.qty_final
         invoices = invoices_by_part.get(p.part_id, [])
         qty_covered_total = sum(
             (Decimal(str(inv["qty_covered"])) for inv in invoices if inv["qty_covered"] is not None),

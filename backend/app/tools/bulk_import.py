@@ -97,7 +97,6 @@ class BomItemSpec:
     part: PartSpec | None = None
     sub_device_name: str | None = None
     sub_bom_version: int | None = None
-    scrap_rate: Decimal | None = None
     note: str | None = None
 
 
@@ -153,7 +152,6 @@ def _parse_bom_item(raw: Any, path: str) -> BomItemSpec:
     item = BomItemSpec(
         path=path,
         qty_per_device=qty,
-        scrap_rate=_to_decimal(raw.get("scrap_rate"), f"{path}.scrap_rate"),
         note=_clean(raw.get("note")),
     )
     if has_part:
@@ -416,7 +414,6 @@ async def import_document(
                     bom_version_id=bom.id,
                     part_id=part.id,
                     qty_per_device=item.qty_per_device,
-                    scrap_rate=item.scrap_rate,
                     note=item.note,
                 ))
                 stats.items_created += 1

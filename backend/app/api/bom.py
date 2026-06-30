@@ -57,7 +57,6 @@ async def create_device_bom(device_id: int, data: BomVersionCreate, session: Asy
                     sub_device_id=src.sub_device_id,
                     sub_bom_version_id=src.sub_bom_version_id,
                     qty_per_device=src.qty_per_device,
-                    scrap_rate=src.scrap_rate,
                     note=src.note,
                 )
             )
@@ -187,7 +186,6 @@ async def create_bom_item(bom_id: int, data: BomItemCreate, session: AsyncSessio
             sub_device_id=data.sub_device_id,
             sub_bom_version_id=data.sub_bom_version_id,
             qty_per_device=data.qty_per_device,
-            scrap_rate=data.scrap_rate,
             note=data.note,
         )
     else:
@@ -198,7 +196,6 @@ async def create_bom_item(bom_id: int, data: BomItemCreate, session: AsyncSessio
             sub_device_id=None,
             sub_bom_version_id=None,
             qty_per_device=data.qty_per_device,
-            scrap_rate=data.scrap_rate,
             note=data.note,
         )
 

@@ -4,6 +4,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app.auth import auth_middleware, ensure_default_users
@@ -79,8 +80,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_allow_origins(),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 app.middleware("http")(auth_middleware)
@@ -93,7 +94,9 @@ async def integrity_error_handler(request: Request, exc: IntegrityError):
         return JSONResponse(status_code=409, content={"detail": "Запись с такими данными уже существует"})
     if "foreign key" in msg.lower() or "violates" in msg.lower():
         return JSONResponse(status_code=400, content={"detail": "Некорректная ссылка (план, деталь и т.д.)"})
-    return JSONResponse(status_code=400, content={"detail": msg})
+    # Не раскрываем клиенту внутренние детали БД — логируем на сервере, отдаём обобщённое сообщение.
+    logging.getLogger(__name__).warning("IntegrityError (%s %s): %s", request.method, request.url.path, msg)
+    return JSONResponse(status_code=400, content={"detail": "Не удалось сохранить данные: нарушение целостности"})
 
 
 
@@ -111,6 +114,13 @@ app.include_router(stats.router)
 
 @app.get("/health")
 async def health():
+    """Liveness + проверка доступности БД, чтобы оркестратор замечал деградацию хранилища."""
+    try:
+        async with async_session_maker() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception:
+        logging.getLogger(__name__).exception("health: БД недоступна")
+        return JSONResponse(status_code=503, content={"status": "degraded", "db": "down"})
     return {"status": "ok"}
 
 

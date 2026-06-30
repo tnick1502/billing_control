@@ -200,6 +200,11 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify({ qty_delivered }),
       }),
+    updatePlanPartFinal: (planId: number, planPartId: number, qty_final: string) =>
+      fetchApi<MonthlyPlanPart>(`/monthly-plans/${planId}/parts/${planPartId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ qty_final }),
+      }),
     partFiles: {
       list: (planId: number, planPartId: number) =>
         fetchApi<PlanPartFile[]>(`/monthly-plans/${planId}/parts/${planPartId}/files`),
@@ -501,7 +506,6 @@ export interface BomItem {
   sub_device_id: number | null;
   sub_bom_version_id: number | null;
   qty_per_device: number;
-  scrap_rate: string | null;
   note: string | null;
   item_type: 'part' | 'sub_device';
 }
@@ -510,7 +514,6 @@ export interface BomItemCreate {
   sub_device_id?: number | null;
   sub_bom_version_id?: number | null;
   qty_per_device: number;
-  scrap_rate?: string | null;
   note?: string | null;
 }
 

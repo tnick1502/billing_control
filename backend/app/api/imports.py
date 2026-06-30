@@ -10,6 +10,7 @@
 
 import asyncio
 import json
+import logging
 import os
 from datetime import datetime
 
@@ -26,6 +27,8 @@ from app.models import Device, DeviceBomItem, DeviceBomVersion, Part, User
 from app.tools.bulk_import import ImportError_, import_document, parse_document
 
 router = APIRouter(prefix="/imports", tags=["imports"])
+
+log = logging.getLogger(__name__)
 
 
 @router.post("/bom")
@@ -60,9 +63,13 @@ async def import_bom(
         except ImportError_ as exc:
             await session.rollback()
             return JSONResponse(status_code=400, content={"detail": str(exc)})
-        except Exception as exc:  # noqa: BLE001 — откатываем и сообщаем
+        except Exception:  # noqa: BLE001 — откатываем; детали в лог, клиенту обобщённо
             await session.rollback()
-            return JSONResponse(status_code=400, content={"detail": f"Ошибка загрузки: {exc}"})
+            log.exception("imports/bom: ошибка загрузки документа")
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Не удалось загрузить файл: проверьте формат и повторите попытку"},
+            )
 
     return {
         "dry_run": dry_run,
@@ -161,8 +168,6 @@ async def export_bom(
                         "part": _part_to_dict(p),
                         "qty_per_device": it.qty_per_device,
                     }
-                    if it.scrap_rate is not None:
-                        item["scrap_rate"] = str(it.scrap_rate)
                     if it.note:
                         item["note"] = it.note
                     items_out.append(item)
