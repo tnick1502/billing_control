@@ -23,6 +23,9 @@ services:
       PUBLIC_ORIGIN: ${PUBLIC_ORIGIN}
       SEED_ON_STARTUP: ${SEED_ON_STARTUP:-true}
       FORCE_RESEED: ${FORCE_RESEED:-false}
+      # ВНИМАНИЕ: WIPE_DB=true при КАЖДОМ старте полностью удаляет и пересоздаёт схему БД (drop_all+create_all).
+      # Использовать разово для чистого развёртывания, затем вернуть false.
+      WIPE_DB: ${WIPE_DB:-false}
 
   frontend:
     build:
