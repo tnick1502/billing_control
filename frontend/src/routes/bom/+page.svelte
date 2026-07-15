@@ -361,28 +361,34 @@
                       {group.label}
                       <span class="ml-2 font-normal normal-case tracking-normal text-zinc-500">{group.items.length} поз.</span>
                     </div>
-                    <table class="w-full">
-                      <thead class="bg-surface-800 text-zinc-400 text-left">
-                        <tr>
-                          <th class="px-4 py-2 font-medium text-sm">Компонент</th>
-                          <th class="px-4 py-2 font-medium text-sm">Кол-во на прибор</th>
-                        </tr>
-                      </thead>
-                      <tbody class="divide-y divide-zinc-800">
-                        {#each group.items as i}
-                          <tr
-                            class="cursor-pointer hover:bg-zinc-800/50"
-                            role="button"
-                            tabindex="0"
-                            on:click={() => openEditItem(i)}
-                            on:keydown={(event) => handleItemRowKeydown(event, i)}
-                          >
-                            <td class="px-4 py-3">{itemRowLabel(i)}</td>
-                            <td class="px-4 py-3 font-mono">{i.qty_per_device}</td>
+                    <div class="overflow-x-auto">
+                      <table class="w-full min-w-[640px] table-fixed">
+                        <colgroup>
+                          <col class="w-[82%]" />
+                          <col class="w-[18%]" />
+                        </colgroup>
+                        <thead class="bg-surface-800 text-zinc-400 text-left">
+                          <tr>
+                            <th class="px-4 py-2 font-medium text-sm">Компонент</th>
+                            <th class="px-4 py-2 font-medium text-sm">Кол-во на прибор</th>
                           </tr>
-                        {/each}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody class="divide-y divide-zinc-800">
+                          {#each group.items as i}
+                            <tr
+                              class="cursor-pointer hover:bg-zinc-800/50"
+                              role="button"
+                              tabindex="0"
+                              on:click={() => openEditItem(i)}
+                              on:keydown={(event) => handleItemRowKeydown(event, i)}
+                            >
+                              <td class="px-4 py-3 truncate" title={itemRowLabel(i)}>{itemRowLabel(i)}</td>
+                              <td class="px-4 py-3 font-mono whitespace-nowrap">{i.qty_per_device}</td>
+                            </tr>
+                          {/each}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 {/each}
               </div>

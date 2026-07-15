@@ -328,7 +328,7 @@ invoices ──< invoice_part_links >── monthly_plans
 | `parts.py` | `/parts` | CRUD + архивация |
 | `orders.py` | `/orders` | CRUD + `GET /orders/{id}/items` |
 | `bom.py` | `/bom` | `GET/POST /bom/devices/{id}/versions`, `GET/POST/DELETE /bom/versions/{id}/items` |
-| `monthly_plans.py` | `/monthly-plans` | `POST /generate`, `GET /{id}/devices`, `GET /{id}/parts-with-coverage`, `PATCH /{plan_id}/parts/{part_id}/delivered`, `GET /remainders` |
+| `monthly_plans.py` | `/monthly-plans` | `POST /generate`, `GET /{id}/devices`, `GET /{id}/parts-with-coverage`, `GET /{id}/export.xlsx`, `PATCH /{plan_id}/parts/{part_id}`, `GET /remainders` |
 | `invoices.py` | `/invoices` | CRUD + `POST /{id}/files`, `GET/POST/PATCH/DELETE /{id}/parts` |
 | `files.py` | `/files` | `GET /{id}/download` |
 | `imports.py` | `/imports` | `POST /imports/bulk` (JSON) |

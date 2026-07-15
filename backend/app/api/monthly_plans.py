@@ -2,11 +2,21 @@ from decimal import Decimal
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPart, InvoicePartLink, Invoice
+from app.models import (
+    Device,
+    DeviceBomVersion,
+    MonthlyPlan,
+    MonthlyPlanDevice,
+    MonthlyPlanPart,
+    InvoicePartLink,
+    Invoice,
+    Part,
+)
 from app.models.monthly_plan import MonthlyPlanPartFile
 from app.models.invoice import File as FileModel
 from app.schemas.common import (
@@ -22,6 +32,13 @@ from app.schemas.common import (
 from app.services.carryover import compute_carryover, recompute_carryover_links
 from app.services.file_storage import delete_orphaned_files, save_upload_as_file
 from app.services.monthly_plan import generate_monthly_plan as do_generate
+from app.services.monthly_plan_excel import (
+    PlanDeviceExportRow,
+    PlanExportMeta,
+    PlanInvoiceExportRow,
+    PlanPartExportRow,
+    build_monthly_plan_xlsx,
+)
 
 router = APIRouter(prefix="/monthly-plans", tags=["monthly-plans"])
 
@@ -112,6 +129,103 @@ async def get_monthly_plan(plan_id: int, session: AsyncSession = Depends(get_db)
     if not plan:
         raise HTTPException(404, "Monthly plan not found")
     return plan
+
+
+@router.get("/{plan_id}/export.xlsx")
+async def export_monthly_plan_excel(plan_id: int, session: AsyncSession = Depends(get_db)):
+    """Скачать месячный план в Excel с группировкой, шифрами и состоянием исполнения."""
+    plan = await session.get(MonthlyPlan, plan_id)
+    if not plan:
+        raise HTTPException(404, "Monthly plan not found")
+
+    device_result = await session.execute(
+        select(MonthlyPlanDevice, Device, DeviceBomVersion)
+        .join(Device, Device.id == MonthlyPlanDevice.device_id)
+        .join(DeviceBomVersion, DeviceBomVersion.id == MonthlyPlanDevice.bom_version_id)
+        .where(MonthlyPlanDevice.plan_id == plan_id)
+    )
+    devices = [
+        PlanDeviceExportRow(
+            device_id=row.device_id,
+            name=device.primary_name,
+            model=device.model,
+            qty_total=row.qty_total,
+            bom_version=bom.version,
+            bom_name=bom.name,
+            bom_status=bom.status,
+        )
+        for row, device, bom in device_result.all()
+    ]
+
+    coverage_result = await session.execute(
+        select(InvoicePartLink.part_id, func.coalesce(func.sum(InvoicePartLink.qty_covered), 0))
+        .where(InvoicePartLink.plan_id == plan_id)
+        .group_by(InvoicePartLink.part_id)
+    )
+    coverage_by_part = {part_id: qty for part_id, qty in coverage_result.all()}
+
+    part_result = await session.execute(
+        select(MonthlyPlanPart, Part)
+        .join(Part, Part.id == MonthlyPlanPart.part_id)
+        .where(MonthlyPlanPart.plan_id == plan_id)
+    )
+    parts = [
+        PlanPartExportRow(
+            part_id=row.part_id,
+            name=part.name,
+            cipher=part.cipher,
+            article=part.article,
+            part_type=part.part_type,
+            qty_required=row.qty_required,
+            qty_final=row.qty_final,
+            qty_covered=coverage_by_part.get(row.part_id, Decimal("0")),
+            qty_delivered=row.qty_delivered,
+        )
+        for row, part in part_result.all()
+    ]
+
+    invoice_result = await session.execute(
+        select(InvoicePartLink, Invoice, Part)
+        .join(Invoice, Invoice.id == InvoicePartLink.invoice_id)
+        .join(Part, Part.id == InvoicePartLink.part_id)
+        .where(InvoicePartLink.plan_id == plan_id)
+    )
+    invoices = [
+        PlanInvoiceExportRow(
+            part_id=link.part_id,
+            part_name=part.name,
+            cipher=part.cipher,
+            part_type=part.part_type,
+            invoice_no=invoice.invoice_no,
+            invoice_date=invoice.invoice_date,
+            supplier=invoice.supplier,
+            qty_covered=link.qty_covered or Decimal("0"),
+            payment_date=invoice.payment_date,
+            is_carryover=link.is_carryover,
+        )
+        for link, invoice, part in invoice_result.all()
+    ]
+
+    payload = build_monthly_plan_xlsx(
+        PlanExportMeta(
+            id=plan.id,
+            month=plan.month,
+            revision=plan.revision,
+            status=plan.status,
+            generated_at=plan.generated_at,
+            generated_by=plan.generated_by,
+            note=plan.note,
+        ),
+        devices,
+        parts,
+        invoices,
+    )
+    filename = f"monthly_plan_{plan.month:%Y-%m}.xlsx"
+    return Response(
+        content=payload,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.patch("/{plan_id}", response_model=MonthlyPlanRead)

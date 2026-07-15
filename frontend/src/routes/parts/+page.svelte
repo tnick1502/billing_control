@@ -268,7 +268,14 @@
           </button>
           {#if expanded[key] !== false}
             <div class="overflow-x-auto">
-              <table class="w-full">
+              <table class="w-full min-w-[1100px] table-fixed">
+                <colgroup>
+                  <col class="w-[7%]" />
+                  <col class="w-[59%]" />
+                  <col class="w-[14%]" />
+                  <col class="w-[10%]" />
+                  <col class="w-[10%]" />
+                </colgroup>
                 <thead class="bg-zinc-900 text-zinc-400 text-left">
                   <tr>
                     <th class="px-4 py-2 font-medium text-sm">ID</th>
@@ -287,16 +294,18 @@
                       role="button"
                       tabindex="0"
                     >
-                      <td class="px-4 py-3 font-mono text-sm">{p.id ?? '—'}</td>
-                      <td class="px-4 py-3">
-                        <span class="{p.is_archived ? 'line-through text-zinc-500' : ''}">{p.name}</span>
-                        {#if p.is_archived}
-                          <span class="ml-2 px-1.5 py-0.5 text-[10px] bg-zinc-700 text-zinc-400 rounded">Архив</span>
-                        {/if}
+                      <td class="px-4 py-3 font-mono text-sm whitespace-nowrap">{p.id ?? '—'}</td>
+                      <td class="px-4 py-3 min-w-0">
+                        <div class="flex min-w-0 items-center">
+                          <span class="truncate {p.is_archived ? 'line-through text-zinc-500' : ''}" title={p.name}>{p.name}</span>
+                          {#if p.is_archived}
+                            <span class="ml-2 shrink-0 px-1.5 py-0.5 text-[10px] bg-zinc-700 text-zinc-400 rounded">Архив</span>
+                          {/if}
+                        </div>
                       </td>
-                      <td class="px-4 py-3 text-zinc-300">{p.cipher || '—'}</td>
-                      <td class="px-4 py-3 text-zinc-300">{p.article || '—'}</td>
-                      <td class="px-4 py-3 text-zinc-400 max-w-xs truncate">{p.description || '—'}</td>
+                      <td class="px-4 py-3 text-zinc-300 truncate" title={p.cipher || undefined}>{p.cipher || '—'}</td>
+                      <td class="px-4 py-3 text-zinc-300 truncate" title={p.article || undefined}>{p.article || '—'}</td>
+                      <td class="px-4 py-3 text-zinc-400 truncate" title={p.description || undefined}>{p.description || '—'}</td>
                     </tr>
                   {/each}
                 </tbody>

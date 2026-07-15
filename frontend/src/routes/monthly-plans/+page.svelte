@@ -53,6 +53,7 @@
   let generateModalOpen = false;
   let generateMonthInput = new Date().toISOString().slice(0, 7);
   let updatingPlanId: number | null = null;
+  let exportingPlanId: number | null = null;
 
   let deliverDraft: Record<number, string> = {};
   let savingDeliveredId: number | null = null;
@@ -203,6 +204,26 @@
       alert((e as Error).message);
     } finally {
       updatingPlanId = null;
+    }
+  }
+
+  async function exportPlan() {
+    if (!selectedPlan) return;
+    exportingPlanId = selectedPlan.id;
+    try {
+      const { blob, filename } = await api.monthlyPlans.exportExcel(selectedPlan.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      exportingPlanId = null;
     }
   }
 
@@ -658,6 +679,14 @@
 
     <div class="flex items-center gap-2 flex-wrap">
       {#if selectedPlan}
+        <button
+          type="button"
+          on:click={exportPlan}
+          disabled={exportingPlanId !== null}
+          class="px-4 py-2 bg-sky-700 text-white font-medium rounded-lg hover:bg-sky-600 disabled:opacity-50 transition-colors text-sm"
+        >
+          {exportingPlanId !== null ? 'Готовим Excel…' : 'Выгрузить Excel'}
+        </button>
         <button
           type="button"
           on:click={updatePlan}

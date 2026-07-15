@@ -27,3 +27,7 @@ portainer_admin_password
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude / Cowork (служебные, не для репозитория)
+.claude/
+/outputs/

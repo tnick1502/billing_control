@@ -194,6 +194,17 @@ export const api = {
     devices: (planId: number) => fetchApi<MonthlyPlanDevice[]>(`/monthly-plans/${planId}/devices`),
     parts: (planId: number) => fetchApi<MonthlyPlanPart[]>(`/monthly-plans/${planId}/parts`),
     partsWithCoverage: (planId: number) => fetchApi<MonthlyPlanPartWithCoverage[]>(`/monthly-plans/${planId}/parts-with-coverage`),
+    exportExcel: async (planId: number): Promise<{ blob: Blob; filename: string }> => {
+      const token = getAuthToken();
+      const res = await fetch(`${API_BASE}/monthly-plans/${planId}/export.xlsx`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw parseApiError(res, await res.text());
+      return {
+        blob: await res.blob(),
+        filename: filenameFromResponse(res, `monthly_plan_${planId}.xlsx`),
+      };
+    },
     remainders: () => fetchApi<RemaindersMatrix>('/monthly-plans/remainders'),
     updatePlanPartDelivered: (planId: number, planPartId: number, qty_delivered: string) =>
       fetchApi<MonthlyPlanPart>(`/monthly-plans/${planId}/parts/${planPartId}`, {
