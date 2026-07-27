@@ -635,6 +635,7 @@ export interface PartInvoiceCoverage {
   link_id: number;
   invoice_id: number;
   invoice_no: string;
+  invoice_date: string;
   supplier: string | null;
   payment_date: string | null;
   qty_covered: string | null;

@@ -898,12 +898,12 @@
             <div class="overflow-x-auto">
             <table class="w-full min-w-[1180px] table-fixed">
               <colgroup>
-                <col style="width: 6%" />
-                <col style="width: 18%" />
-                <col style="width: 14%" />
-                <col style="width: 20.666%" />
-                <col style="width: 20.666%" />
-                <col style="width: 20.666%" />
+                <col style="width: 5%" />
+                <col style="width: 16%" />
+                <col style="width: 12%" />
+                <col style="width: 17%" />
+                <col style="width: 29%" />
+                <col style="width: 21%" />
               </colgroup>
               <thead class="bg-zinc-900 text-zinc-400">
                 <tr>
@@ -919,10 +919,16 @@
                 {#each groupParts as p (p.id)}
                   <tr class="hover:bg-zinc-800/30">
                     <td class="px-3 py-3 font-mono text-sm text-center align-top">{partId(p.part_id) ?? '—'}</td>
-                    <td class="px-4 py-3 align-top">{partName(p.part_id)}</td>
-                    <td class="px-4 py-3 text-zinc-300 align-top">{partSupplier(p.part_id)}</td>
-                    <td class="px-4 py-3 text-center align-top">
-                      <div class="flex flex-wrap items-center justify-center gap-1.5">
+                    <td class="px-4 py-3 align-top">
+                      <div class="break-words font-medium text-zinc-100" title={partName(p.part_id)}>
+                        {partName(p.part_id)}
+                      </div>
+                    </td>
+                    <td class="px-4 py-3 text-zinc-300 align-top">
+                      <div class="break-words" title={partSupplier(p.part_id)}>{partSupplier(p.part_id)}</div>
+                    </td>
+                    <td class="px-3 py-3 text-center align-top">
+                      <div class="mx-auto grid max-w-[220px] grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
                         <input
                           type="number"
                           step="1"
@@ -934,13 +940,13 @@
                               finalDraft = { ...finalDraft, [p.id]: el.value };
                             }
                           }}
-                          class="w-24 px-2 py-1.5 bg-zinc-900 border border-zinc-600 rounded text-white text-sm font-mono"
+                          class="min-w-0 w-full px-2 py-1.5 bg-zinc-900 border border-zinc-600 rounded text-white text-sm font-mono"
                         />
                         <button
                           type="button"
                           disabled={savingFinalId === p.id}
                           on:click={() => submitFinal(currentPlanId, p)}
-                          class="px-2 py-1.5 bg-zinc-600 text-white rounded text-xs hover:bg-zinc-500 disabled:opacity-50"
+                          class="h-8 px-3 bg-zinc-600 text-white rounded text-xs font-medium hover:bg-zinc-500 disabled:opacity-50"
                         >
                           {savingFinalId === p.id ? '…' : 'Сохранить'}
                         </button>
@@ -949,9 +955,9 @@
                         <div class="mt-1 text-[10px] text-zinc-500">расчёт по заказам: <span class="font-mono">{formatIntegerQty(p.qty_required)}</span></div>
                       {/if}
                     </td>
-                    <td class="px-4 py-3 text-center align-top">
+                    <td class="overflow-hidden px-3 py-3 text-center align-top">
                       <div
-                        class="mb-1 rounded border px-2 py-1 text-[11px] {coverageOk(p)
+                        class="mb-2 rounded-lg border px-3 py-1.5 text-xs font-medium {coverageOk(p)
                           ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-200'
                           : 'bg-red-500/15 border-red-500/40 text-red-200'}"
                       >
@@ -963,42 +969,59 @@
                           {#each p.invoices ?? [] as inv}
                             {@const isExpanded = !!expandedInvoiceLinks[inv.link_id]}
                             <li
-                              class="rounded border {inv.payment_date
+                              class="overflow-hidden rounded-lg border {inv.payment_date
                                 ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-100'
                                 : 'bg-red-500/15 border-red-500/40 text-red-100'}"
-                              on:click={() => toggleInvoiceDetails(inv)}
-                              on:keydown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleInvoiceDetails(inv)}
-                              role="button"
-                              tabindex="0"
                             >
-                              <div class="flex items-center gap-2 min-w-0 px-2 py-1.5 cursor-pointer">
-                                <span class="text-zinc-400 text-[10px] shrink-0">{isExpanded ? '▾' : '▸'}</span>
-                                <span class="font-mono shrink-0">№{inv.invoice_no}</span>
-                                {#if inv.is_carryover}
-                                  <span class="shrink-0 rounded bg-sky-500/20 border border-sky-500/40 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-sky-200" title="Автоматический перенос остатка прошлых месяцев">перенос</span>
-                                {/if}
-                                <span class="min-w-0 flex-1 truncate text-zinc-300">{inv.supplier || 'без поставщика'}</span>
-                                <span class="font-mono shrink-0">покр. {formatIntegerQty(inv.qty_covered)}</span>
-                                <span class="shrink-0 {inv.payment_date ? 'text-emerald-300' : 'text-red-300'}">опл. {formatDate(inv.payment_date)}</span>
-                                {#if !inv.is_carryover}
-                                  <button
-                                    type="button"
-                                    class="shrink-0 text-xs text-amber-300 hover:text-amber-200 underline"
-                                    on:click|stopPropagation={() => openEditInvoiceModal(inv, p.id)}
-                                  >
-                                    Изм.
-                                  </button>
-                                  <button
-                                    type="button"
-                                    class="shrink-0 text-xs text-red-300 hover:text-red-200 underline"
-                                    on:click|stopPropagation={() => unlinkLink(inv.invoice_id, inv.link_id, p.id)}
-                                  >
-                                    Отвязать
-                                  </button>
-                                {/if}
+                              <div class="px-2.5 py-2">
+                                <button
+                                  type="button"
+                                  on:click={() => toggleInvoiceDetails(inv)}
+                                  aria-expanded={isExpanded}
+                                  class="grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_minmax(80px,0.75fr)] items-center gap-2 rounded text-left focus:outline-none focus:ring-2 focus:ring-white/30"
+                                >
+                                  <span class="text-zinc-400 text-[10px]">{isExpanded ? '▾' : '▸'}</span>
+                                  <span class="flex min-w-0 items-center gap-2 overflow-hidden">
+                                    <span class="truncate font-mono font-semibold" title={`№${inv.invoice_no}`}>№{inv.invoice_no}</span>
+                                    <span class="shrink-0 whitespace-nowrap text-zinc-400">от {formatDate(inv.invoice_date)}</span>
+                                    {#if inv.is_carryover}
+                                      <span class="shrink-0 rounded bg-sky-500/20 border border-sky-500/40 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-sky-200" title="Автоматический перенос остатка прошлых месяцев">перенос</span>
+                                    {/if}
+                                  </span>
+                                  <span class="min-w-0 truncate text-right text-zinc-300" title={inv.supplier || 'Без поставщика'}>
+                                    {inv.supplier || 'Без поставщика'}
+                                  </span>
+                                </button>
+
+                                <div class="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 border-t border-white/10 pt-2">
+                                  <span class="whitespace-nowrap rounded bg-black/20 px-2 py-1 font-mono text-[10px]">
+                                    Покрыто {formatIntegerQty(inv.qty_covered)}
+                                  </span>
+                                  <span class="whitespace-nowrap rounded bg-black/20 px-2 py-1 text-[10px] {inv.payment_date ? 'text-emerald-300' : 'text-red-300'}">
+                                    {inv.payment_date ? `Оплата ${formatDate(inv.payment_date)}` : 'Не оплачен'}
+                                  </span>
+                                  {#if !inv.is_carryover}
+                                    <span class="ml-auto flex flex-wrap items-center justify-end gap-1">
+                                      <button
+                                        type="button"
+                                        class="h-7 rounded border border-amber-500/40 bg-amber-500/10 px-2 text-[10px] font-medium text-amber-200 hover:bg-amber-500/20"
+                                        on:click={() => openEditInvoiceModal(inv, p.id)}
+                                      >
+                                        Изменить
+                                      </button>
+                                      <button
+                                        type="button"
+                                        class="h-7 rounded border border-red-500/40 bg-red-500/10 px-2 text-[10px] font-medium text-red-200 hover:bg-red-500/20"
+                                        on:click={() => unlinkLink(inv.invoice_id, inv.link_id, p.id)}
+                                      >
+                                        Отвязать
+                                      </button>
+                                    </span>
+                                  {/if}
+                                </div>
                               </div>
                               {#if isExpanded}
-                                <div class="border-t border-white/10 px-2 py-2 space-y-2">
+                                <div class="border-t border-white/10 bg-black/10 px-3 py-2 space-y-2">
                                   <div class="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px] text-zinc-300">
                                     <div><span class="text-zinc-500">Номер:</span> <span class="font-mono">№{inv.invoice_no}</span></div>
                                     {#if inv.supplier}<div class="col-span-2"><span class="text-zinc-500">Поставщик:</span> {inv.supplier}</div>{/if}
@@ -1039,34 +1062,39 @@
                           {/each}
                         </ul>
                       {/if}
-                      <div class="mt-2 flex flex-wrap justify-center gap-2">
+                      <div class="mt-2 flex flex-wrap justify-center gap-1.5">
                         <button
                           type="button"
                           on:click={() => openLinkModal(currentPlanId, [p.part_id])}
-                          class="text-amber-500 hover:text-amber-400 text-sm"
+                          class="min-h-8 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-500/20"
                         >
-                          {p.has_invoice ? 'Привязать доп. счёт' : 'Привязать счёт'}
+                          {p.has_invoice ? 'Привязать ещё счёт' : 'Привязать счёт'}
                         </button>
                         <button
                           type="button"
                           on:click={() => openCreateInvoiceModal(currentPlanId, [p.part_id])}
-                          class="text-emerald-500 hover:text-emerald-400 text-sm"
+                          class="min-h-8 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20"
                         >
                           Создать счёт
                         </button>
                       </div>
                     </td>
                     <td
-                      class="px-4 py-3 text-center align-top {deliveryOk(p)
-                        ? 'bg-emerald-500/15 border-l-2 border-emerald-500/40'
-                        : 'bg-red-500/15 border-l-2 border-red-500/40'}"
+                      class="overflow-hidden px-3 py-3 text-center align-top {deliveryOk(p)
+                        ? 'bg-emerald-950/20 border-l-2 border-emerald-500/40'
+                        : 'bg-red-950/20 border-l-2 border-red-500/40'}"
                     >
                       {#if !p.has_invoice}
-                        <span class="text-zinc-500 text-sm">После привязки счёта</span>
+                        <div class="mx-auto max-w-[270px] rounded-lg border border-zinc-700/70 bg-black/10 px-3 py-2 text-xs text-zinc-500">
+                          Поставка станет доступна после привязки счёта
+                        </div>
                       {:else}
-                        <div class="flex flex-wrap items-end justify-center gap-2">
-                          <div>
-                            <label class="sr-only" for="del-{p.id}">Поставлено из {p.qty_final}</label>
+                        <div class="mx-auto grid max-w-[280px] grid-cols-[minmax(0,1fr)_auto] items-end gap-2 text-left">
+                          <div class="min-w-0">
+                            <label class="mb-1 block text-[10px] font-medium uppercase tracking-wide text-zinc-500" for="del-{p.id}">
+                              Поставлено
+                            </label>
+                            <div class="flex min-w-0 items-center gap-1.5">
                             <input
                               id="del-{p.id}"
                               type="number"
@@ -1080,15 +1108,16 @@
                                   deliverDraft = { ...deliverDraft, [p.id]: el.value };
                                 }
                               }}
-                              class="w-28 px-2 py-1.5 bg-zinc-900 border border-zinc-600 rounded text-white text-sm font-mono"
+                              class="min-w-0 w-full px-2 py-1.5 bg-zinc-900 border border-zinc-600 rounded text-white text-sm font-mono"
                             />
-                            <span class="text-zinc-500 text-xs ml-1">из {formatIntegerQty(p.qty_final)}</span>
+                              <span class="shrink-0 whitespace-nowrap text-xs text-zinc-500">из {formatIntegerQty(p.qty_final)}</span>
+                            </div>
                           </div>
                           <button
                             type="button"
                             disabled={savingDeliveredId === p.id}
                             on:click={() => submitDelivered(currentPlanId, p)}
-                            class="px-2 py-1.5 bg-zinc-600 text-white rounded text-xs hover:bg-zinc-500 disabled:opacity-50"
+                            class="h-8 px-3 bg-zinc-600 text-white rounded text-xs font-medium hover:bg-zinc-500 disabled:opacity-50"
                           >
                             {savingDeliveredId === p.id ? '…' : 'Сохранить'}
                           </button>
@@ -1096,7 +1125,7 @@
                       {/if}
 
                       <!-- Delivery files -->
-                      <div class="mt-3">
+                      <div class="mx-auto mt-3 max-w-[280px]">
                         {#if (p.files ?? []).length > 0}
                           <div class="space-y-1 mb-2 text-left">
                             {#each p.files ?? [] as f (f.id)}
@@ -1135,7 +1164,7 @@
                           type="button"
                           disabled={uploadingFilesPartId === p.id}
                           on:click={() => planPartFileInputs[p.id]?.click()}
-                          class="text-xs text-zinc-400 hover:text-zinc-200 underline disabled:opacity-50"
+                          class="min-h-8 rounded-lg border border-zinc-600 bg-zinc-800/70 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-700 disabled:opacity-50"
                         >
                           {uploadingFilesPartId === p.id ? 'Загрузка…' : '+ Добавить файлы'}
                         </button>

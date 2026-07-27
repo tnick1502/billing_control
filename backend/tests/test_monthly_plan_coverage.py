@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.api.monthly_plans import _plan_parts_with_coverage
 from app.database import Base
-from app.models import MonthlyPlan, MonthlyPlanPart
+from app.models import Invoice, InvoicePartLink, MonthlyPlan, MonthlyPlanPart
 
 
 def test_coverage_can_be_loaded_for_only_requested_plan_rows():
@@ -36,13 +36,32 @@ def test_coverage_can_be_loaded_for_only_requested_plan_rows():
                 session.add_all(rows)
                 await session.flush()
 
+                invoice = Invoice(
+                    invoice_no="СФ-2026-07",
+                    invoice_date=date(2026, 7, 21),
+                    supplier="ООО Поставщик",
+                )
+                session.add(invoice)
+                await session.flush()
+                session.add(
+                    InvoicePartLink(
+                        invoice_id=invoice.id,
+                        plan_id=plan.id,
+                        part_id=rows[0].part_id,
+                        qty_covered=Decimal("3"),
+                        is_carryover=False,
+                    )
+                )
+                await session.flush()
+
                 one = await _plan_parts_with_coverage(
                     plan.id,
                     session,
                     plan_part_id=rows[0].id,
                 )
                 assert [item["id"] for item in one] == [rows[0].id]
-                assert one[0]["qty_covered_total"] == "0"
+                assert one[0]["qty_covered_total"] == "3.000000"
+                assert one[0]["invoices"][0]["invoice_date"] == "2026-07-21"
                 assert one[0]["delivery_complete"] is False
 
                 batch = await _plan_parts_with_coverage(
