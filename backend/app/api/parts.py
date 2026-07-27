@@ -21,7 +21,7 @@ def _clean_text(value: str | None) -> str | None:
 
 
 def _normalize_part_payload(data: dict) -> dict:
-    for key in ("name", "cipher", "article", "part_type", "description"):
+    for key in ("name", "cipher", "article", "part_type", "supplier", "description"):
         if key in data:
             data[key] = _clean_text(data[key])
     return data

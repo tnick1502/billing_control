@@ -108,6 +108,7 @@ class PartBase(BaseModel):
     cipher: str | None = None
     article: str | None = None
     part_type: str | None = None
+    supplier: str | None = None
     description: str | None = None
 
 
@@ -120,6 +121,7 @@ class PartUpdate(BaseModel):
     cipher: str | None = None
     article: str | None = None
     part_type: str | None = None
+    supplier: str | None = None
     description: str | None = None
 
 

@@ -1,7 +1,7 @@
 from decimal import Decimal
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -394,15 +394,27 @@ async def delete_plan_part_file(
     return None
 
 
-@router.get("/{plan_id}/parts-with-coverage")
-async def list_plan_parts_with_coverage(plan_id: int, session: AsyncSession = Depends(get_db)):
-    """Returns plan parts with invoice coverage and attached delivery files."""
+async def _plan_parts_with_coverage(
+    plan_id: int,
+    session: AsyncSession,
+    *,
+    plan_part_id: int | None = None,
+    plan_part_ids: list[int] | None = None,
+) -> list[dict]:
+    """Build coverage data for a whole plan or one requested plan row."""
     if not await session.get(MonthlyPlan, plan_id):
         raise HTTPException(404, "Monthly plan not found")
-    parts_result = await session.execute(
-        select(MonthlyPlanPart).where(MonthlyPlanPart.plan_id == plan_id)
-    )
+    parts_query = select(MonthlyPlanPart).where(MonthlyPlanPart.plan_id == plan_id)
+    if plan_part_id is not None:
+        parts_query = parts_query.where(MonthlyPlanPart.id == plan_part_id)
+    elif plan_part_ids is not None:
+        parts_query = parts_query.where(MonthlyPlanPart.id.in_(plan_part_ids))
+    parts_result = await session.execute(parts_query)
     parts = list(parts_result.scalars().all())
+    if plan_part_id is not None and not parts:
+        raise HTTPException(404, "Строка плана не найдена")
+
+    part_ids = [p.part_id for p in parts]
     links_result = await session.execute(
         select(
             InvoicePartLink.id.label("link_id"),
@@ -415,7 +427,10 @@ async def list_plan_parts_with_coverage(plan_id: int, session: AsyncSession = De
             InvoicePartLink.is_carryover,
         )
         .join(Invoice, Invoice.id == InvoicePartLink.invoice_id)
-        .where(InvoicePartLink.plan_id == plan_id)
+        .where(
+            InvoicePartLink.plan_id == plan_id,
+            InvoicePartLink.part_id.in_(part_ids),
+        )
     )
     invoices_by_part: dict[int, list[dict]] = {p.part_id: [] for p in parts}
     for row in links_result.all():
@@ -478,3 +493,32 @@ async def list_plan_parts_with_coverage(plan_id: int, session: AsyncSession = De
             }
         )
     return out
+
+
+@router.get("/{plan_id}/parts-with-coverage")
+async def list_plan_parts_with_coverage(
+    plan_id: int,
+    plan_part_ids: List[int] | None = Query(default=None),
+    session: AsyncSession = Depends(get_db),
+):
+    """Returns all plan rows, or only requested rows, with coverage and files."""
+    return await _plan_parts_with_coverage(
+        plan_id,
+        session,
+        plan_part_ids=plan_part_ids,
+    )
+
+
+@router.get("/{plan_id}/parts/{plan_part_id}/with-coverage")
+async def get_plan_part_with_coverage(
+    plan_id: int,
+    plan_part_id: int,
+    session: AsyncSession = Depends(get_db),
+):
+    """Returns one plan row so the UI can update it without rebuilding the page."""
+    rows = await _plan_parts_with_coverage(
+        plan_id,
+        session,
+        plan_part_id=plan_part_id,
+    )
+    return rows[0]

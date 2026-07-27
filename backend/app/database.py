@@ -38,6 +38,9 @@ engine = create_async_engine(
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
     pool_timeout=settings.db_pool_timeout,
+    # Последним использованным соединением пользуемся первым: остальные могут спокойно
+    # простаивать и закрываться на стороне managed PostgreSQL, не раздувая число активных slots.
+    pool_use_lifo=True,
 )
 
 async_session_maker = async_sessionmaker(
@@ -51,6 +54,20 @@ async_session_maker = async_sessionmaker(
 
 class Base(DeclarativeBase):
     pass
+
+
+def pool_snapshot() -> dict[str, int | str]:
+    """Без подключения к БД вернуть текущее состояние локального SQLAlchemy-пула."""
+    pool = engine.sync_engine.pool
+    return {
+        "size": pool.size(),
+        "checked_in": pool.checkedin(),
+        "checked_out": pool.checkedout(),
+        # До первого заполнения QueuePool внутренне считает незанятые базовые slots
+        # отрицательным overflow; наружу отдаём понятное неотрицательное значение.
+        "overflow": max(0, pool.overflow()),
+        "connection_budget": settings.db_connection_budget,
+    }
 
 
 async def wipe_application_schema(engine) -> None:

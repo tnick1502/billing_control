@@ -2,11 +2,12 @@
   import { onMount } from 'svelte';
   import '../app.css';
   import { page } from '$app/stores';
-  import { api, clearAuthToken, getAuthToken } from '$lib/api';
+  import { api, ApiError, clearAuthToken, getAuthToken } from '$lib/api';
   import type { User } from '$lib/api';
 
   let currentUser: User | null = null;
   let authReady = false;
+  let authError = '';
 
   $: isLoginPage = $page.url.pathname === '/login';
 
@@ -49,11 +50,18 @@
       currentUser = await Promise.race([mePromise, timeoutPromise]);
       authReady = true;
       if (isLoginPage) goPlans();
-    } catch {
-      clearAuthToken();
+    } catch (e) {
       currentUser = null;
       authReady = true;
-      if (!isLoginPage) goLogin();
+      const authRejected = e instanceof ApiError && (e.status === 401 || e.status === 403);
+      if (authRejected) {
+        clearAuthToken();
+        if (!isLoginPage) goLogin();
+      } else {
+        authError = e instanceof ApiError
+          ? e.message
+          : 'Сервер временно недоступен. Токен сохранён.';
+      }
     }
   });
 
@@ -74,6 +82,21 @@
   <slot />
 {:else if !authReady}
   <div class="min-h-screen flex items-center justify-center bg-zinc-950 text-zinc-300">Проверка авторизации...</div>
+{:else if authError}
+  <div class="min-h-screen flex items-center justify-center bg-zinc-950 px-4 text-zinc-200">
+    <div class="w-full max-w-md rounded-xl border border-amber-800/70 bg-amber-950/30 p-6 text-center">
+      <h1 class="text-lg font-semibold text-amber-200">Не удалось проверить авторизацию</h1>
+      <p class="mt-2 text-sm text-zinc-300">{authError}</p>
+      <p class="mt-2 text-xs text-zinc-500">Сохранённый токен не удалён.</p>
+      <button
+        type="button"
+        on:click={() => window.location.reload()}
+        class="mt-4 rounded-lg bg-amber-500 px-4 py-2 font-medium text-black hover:bg-amber-400"
+      >
+        Повторить
+      </button>
+    </div>
+  </div>
 {:else}
 <div class="min-h-screen flex">
   <aside class="w-56 shrink-0 bg-surface-900 border-r border-zinc-800 flex flex-col">

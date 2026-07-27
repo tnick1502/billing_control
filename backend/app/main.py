@@ -1,19 +1,35 @@
 import asyncio
 from contextlib import asynccontextmanager
 import logging
+from time import perf_counter
+from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DBAPIError, IntegrityError, TimeoutError as SQLAlchemyTimeoutError
 
 from app.auth import auth_middleware, ensure_default_users
 from app.config import settings
 from app.api import auth, bom, devices, files, imports, invoices, monthly_plans, orders, parts, stats
-from app.database import Base, async_session_maker, engine, wipe_application_schema
+from app.database import Base, async_session_maker, engine, pool_snapshot, wipe_application_schema
 from app.schema_ensure import ensure_schema
 from app.seeds.init_data import seed_database
+
+log = logging.getLogger(__name__)
+
+
+def _pool_status() -> str:
+    try:
+        snapshot = pool_snapshot()
+        return " ".join(f"{key}={value}" for key, value in snapshot.items())
+    except Exception:
+        return "unavailable"
+
+
+def _request_id(request: Request) -> str:
+    return getattr(request.state, "request_id", "unknown")
 
 
 def _cors_allow_origins() -> list[str]:
@@ -26,9 +42,17 @@ def _cors_allow_origins() -> list[str]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print(
-        f"[billing_control] DB TLS: ssl={settings.database_ssl} verify={settings.database_ssl_verify}",
-        flush=True,
+    log.info(
+        "startup db_ssl=%s db_ssl_verify=%s db_pool_size=%s db_max_overflow=%s "
+        "db_connection_budget=%s db_pool_timeout=%ss db_pool_recycle=%ss log_requests=%s",
+        settings.database_ssl,
+        settings.database_ssl_verify,
+        settings.db_pool_size,
+        settings.db_max_overflow,
+        settings.db_connection_budget,
+        settings.db_pool_timeout,
+        settings.db_pool_recycle,
+        settings.log_requests,
     )
     if settings.wipe_db:
         await wipe_application_schema(engine)
@@ -72,7 +96,7 @@ app = FastAPI(
 
 # Чтобы в Docker/uvicorn в логах были traceback при 500 (logging.basicConfig до регистрации роутов)
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, settings.log_level),
     format="%(levelname)s [%(name)s] %(message)s",
     force=True,
 )
@@ -88,6 +112,59 @@ app.add_middleware(
 app.middleware("http")(auth_middleware)
 
 
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id") or uuid4().hex[:12]
+    request.state.request_id = request_id
+    started = perf_counter()
+    try:
+        response = await call_next(request)
+    except (SQLAlchemyTimeoutError, DBAPIError):
+        duration_ms = (perf_counter() - started) * 1000
+        log.exception(
+            "request_db_failed request_id=%s method=%s path=%s duration_ms=%.1f pool=%s",
+            request_id,
+            request.method,
+            request.url.path,
+            duration_ms,
+            _pool_status(),
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": "База данных временно недоступна. Повторите запрос через несколько секунд.",
+                "request_id": request_id,
+            },
+            headers={"x-request-id": request_id, "retry-after": "2"},
+        )
+    except Exception:
+        duration_ms = (perf_counter() - started) * 1000
+        log.exception(
+            "request_failed request_id=%s method=%s path=%s duration_ms=%.1f pool=%s",
+            request_id,
+            request.method,
+            request.url.path,
+            duration_ms,
+            _pool_status(),
+        )
+        raise
+
+    response.headers["x-request-id"] = request_id
+    if settings.log_requests:
+        user = getattr(request.state, "user", None)
+        log.info(
+            "request request_id=%s method=%s path=%s status=%s duration_ms=%.1f user=%s pool=%s",
+            request_id,
+            request.method,
+            request.url.path,
+            response.status_code,
+            (perf_counter() - started) * 1000,
+            getattr(user, "username", "-"),
+            _pool_status(),
+        )
+    return response
+
+
 @app.exception_handler(IntegrityError)
 async def integrity_error_handler(request: Request, exc: IntegrityError):
     msg = str(exc.orig) if exc.orig else str(exc)
@@ -96,8 +173,52 @@ async def integrity_error_handler(request: Request, exc: IntegrityError):
     if "foreign key" in msg.lower() or "violates" in msg.lower():
         return JSONResponse(status_code=400, content={"detail": "Некорректная ссылка (план, деталь и т.д.)"})
     # Не раскрываем клиенту внутренние детали БД — логируем на сервере, отдаём обобщённое сообщение.
-    logging.getLogger(__name__).warning("IntegrityError (%s %s): %s", request.method, request.url.path, msg)
+    log.warning(
+        "integrity_error request_id=%s method=%s path=%s error=%s",
+        _request_id(request),
+        request.method,
+        request.url.path,
+        msg,
+    )
     return JSONResponse(status_code=400, content={"detail": "Не удалось сохранить данные: нарушение целостности"})
+
+
+@app.exception_handler(SQLAlchemyTimeoutError)
+async def db_pool_timeout_handler(request: Request, exc: SQLAlchemyTimeoutError):
+    log.exception(
+        "db_pool_timeout request_id=%s method=%s path=%s pool=%s",
+        _request_id(request),
+        request.method,
+        request.url.path,
+        _pool_status(),
+    )
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "База данных перегружена: нет свободного подключения. Повторите запрос через несколько секунд.",
+            "request_id": _request_id(request),
+        },
+        headers={"retry-after": "2"},
+    )
+
+
+@app.exception_handler(DBAPIError)
+async def db_api_error_handler(request: Request, exc: DBAPIError):
+    log.exception(
+        "db_error request_id=%s method=%s path=%s pool=%s",
+        _request_id(request),
+        request.method,
+        request.url.path,
+        _pool_status(),
+    )
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "База данных временно недоступна. Повторите запрос через несколько секунд.",
+            "request_id": _request_id(request),
+        },
+        headers={"retry-after": "2"},
+    )
 
 
 
@@ -124,9 +245,12 @@ async def health():
     try:
         await asyncio.wait_for(_check_db(), timeout=3)
     except Exception:
-        logging.getLogger(__name__).warning("health: БД недоступна или не отвечает за 3с")
-        return JSONResponse(status_code=503, content={"status": "degraded", "db": "down"})
-    return {"status": "ok"}
+        log.exception("health_db_down pool=%s", _pool_status())
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "db": "down", "pool": pool_snapshot()},
+        )
+    return {"status": "ok", "db": "up", "pool": pool_snapshot()}
 
 
 if __name__ == "__main__":

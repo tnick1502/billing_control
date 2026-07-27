@@ -1,5 +1,30 @@
 const API_BASE = '/api';
 const AUTH_TOKEN_KEY = 'billing_control_auth_token';
+const TRANSIENT_GET_ATTEMPTS = 2;
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly requestId: string;
+
+  constructor(message: string, status: number, requestId = '') {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.requestId = requestId;
+  }
+}
+
+function retryDelayMs(res: Response): number {
+  const retryAfterSeconds = Number(res.headers.get('retry-after'));
+  const baseMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+    ? retryAfterSeconds * 1000
+    : 1000;
+  return baseMs + Math.floor(Math.random() * 400);
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export function getAuthToken() {
   if (typeof localStorage === 'undefined') return '';
@@ -17,16 +42,28 @@ export function clearAuthToken() {
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const token = getAuthToken();
   const hasBody = options?.body != null && options.body !== '';
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options?.headers,
-    },
-  });
+  const method = (options?.method ?? 'GET').toUpperCase();
+  let res: Response;
+  for (let attempt = 1; ; attempt += 1) {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: {
+        ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options?.headers,
+      },
+    });
+    if (method !== 'GET' || res.status !== 503 || attempt >= TRANSIENT_GET_ATTEMPTS) break;
+    // Освобождаем HTTP-соединение перед повтором и добавляем jitter, чтобы вкладки
+    // не повторяли запросы к восстанавливающейся БД одновременно.
+    await res.arrayBuffer().catch(() => undefined);
+    await delay(retryDelayMs(res));
+  }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    const err = (await res.json().catch(() => ({ detail: res.statusText }))) as {
+      detail?: unknown;
+      request_id?: unknown;
+    };
     const d = err.detail;
     const msg =
       typeof d === 'string'
@@ -34,9 +71,17 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
         : Array.isArray(d)
           ? d.map((x: { msg?: string }) => x?.msg).filter(Boolean).join('; ') || JSON.stringify(d)
           : d != null
-            ? JSON.stringify(d)
-            : res.statusText;
-    throw new Error(msg || 'Ошибка запроса');
+          ? JSON.stringify(d)
+          : res.statusText;
+    const requestId =
+      res.headers.get('x-request-id') ??
+      (typeof err.request_id === 'string' ? err.request_id : '');
+    const displayMessage = msg || 'Ошибка запроса';
+    throw new ApiError(
+      requestId ? `${displayMessage} (ID: ${requestId})` : displayMessage,
+      res.status,
+      requestId,
+    );
   }
   if (res.status === 204) return undefined as T;
   return res.json();
@@ -48,9 +93,9 @@ function filenameFromResponse(res: Response, fallback: string): string {
   return m ? decodeURIComponent(m[1]) : fallback;
 }
 
-function parseApiError(res: Response, bodyText: string): Error {
+function parseApiError(res: Response, bodyText: string): ApiError {
   try {
-    const err = JSON.parse(bodyText) as { detail?: unknown };
+    const err = JSON.parse(bodyText) as { detail?: unknown; request_id?: unknown };
     const d = err.detail;
     const msg =
       typeof d === 'string'
@@ -58,11 +103,25 @@ function parseApiError(res: Response, bodyText: string): Error {
         : Array.isArray(d)
           ? d.map((x: { msg?: string }) => x?.msg).filter(Boolean).join('; ') || bodyText
           : d != null
-            ? JSON.stringify(d)
-            : res.statusText;
-    return new Error(msg || 'Ошибка запроса');
+          ? JSON.stringify(d)
+          : res.statusText;
+    const requestId =
+      res.headers.get('x-request-id') ??
+      (typeof err.request_id === 'string' ? err.request_id : '');
+    const displayMessage = msg || 'Ошибка запроса';
+    return new ApiError(
+      requestId ? `${displayMessage} (ID: ${requestId})` : displayMessage,
+      res.status,
+      requestId,
+    );
   } catch {
-    return new Error(bodyText || res.statusText || 'Ошибка запроса');
+    const requestId = res.headers.get('x-request-id') ?? '';
+    const displayMessage = bodyText || res.statusText || 'Ошибка запроса';
+    return new ApiError(
+      requestId ? `${displayMessage} (ID: ${requestId})` : displayMessage,
+      res.status,
+      requestId,
+    );
   }
 }
 
@@ -194,6 +253,15 @@ export const api = {
     devices: (planId: number) => fetchApi<MonthlyPlanDevice[]>(`/monthly-plans/${planId}/devices`),
     parts: (planId: number) => fetchApi<MonthlyPlanPart[]>(`/monthly-plans/${planId}/parts`),
     partsWithCoverage: (planId: number) => fetchApi<MonthlyPlanPartWithCoverage[]>(`/monthly-plans/${planId}/parts-with-coverage`),
+    partsWithCoverageByIds: (planId: number, planPartIds: number[]) => {
+      const query = new URLSearchParams();
+      for (const id of planPartIds) query.append('plan_part_ids', String(id));
+      return fetchApi<MonthlyPlanPartWithCoverage[]>(
+        `/monthly-plans/${planId}/parts-with-coverage?${query}`,
+      );
+    },
+    partWithCoverage: (planId: number, planPartId: number) =>
+      fetchApi<MonthlyPlanPartWithCoverage>(`/monthly-plans/${planId}/parts/${planPartId}/with-coverage`),
     exportExcel: async (planId: number): Promise<{ blob: Blob; filename: string }> => {
       const token = getAuthToken();
       const res = await fetch(`${API_BASE}/monthly-plans/${planId}/export.xlsx`, {
@@ -429,6 +497,7 @@ export interface Part {
   cipher: string | null;
   article: string | null;
   part_type: string | null;
+  supplier: string | null;
   description: string | null;
   is_archived: boolean;
   created_at: string;
@@ -438,6 +507,7 @@ export interface PartCreate {
   cipher?: string | null;
   article?: string | null;
   part_type?: string | null;
+  supplier?: string | null;
   description?: string | null;
 }
 

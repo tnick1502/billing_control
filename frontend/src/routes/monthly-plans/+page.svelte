@@ -8,6 +8,7 @@
 
   const NO_TYPE_LABEL = 'Без типа';
   const PART_GROUPS_STORAGE_KEY = 'monthly-plans:expandedPartGroups:v2';
+  const PART_NAME_COLLATOR = new Intl.Collator('ru', { sensitivity: 'base', numeric: true });
 
   let plans: MonthlyPlan[] = [];
   let selectedMonth: string = new Date().toISOString().slice(0, 7);
@@ -16,7 +17,7 @@
   let initialized = false;
 
   let devices: { id: number; primary_name: string }[] = [];
-  let parts: { id: number; name: string; part_type: string | null }[] = [];
+  let parts: { id: number; name: string; part_type: string | null; supplier: string | null }[] = [];
   let invoices: Invoice[] = [];
   let expandedPartGroups: Record<string, boolean> = loadExpandedPartGroups();
 
@@ -81,10 +82,13 @@
   let editInvoiceModalOpen = false;
   let editInvoiceId = 0;
   let editInvoiceLinkId = 0;
+  let editInvoicePlanId = 0;
+  let editInvoicePlanPartId = 0;
   let editInvoiceForm: InvoiceCreate = emptyInvoiceForm();
   let editInvoiceLinkQty = '';
   let expandedInvoiceLinks: Record<number, boolean> = {};
   let invoiceFilesCache: Record<number, InvoiceFileInfo[]> = {};
+  let planPartRefreshVersions: Record<number, number> = {};
 
   function refreshDeliverDrafts() {
     const d: Record<number, string> = {};
@@ -111,11 +115,16 @@
       const [list, devs, pts, invs] = await Promise.all([
         api.monthlyPlans.list(),
         api.devices.list(),
-        api.parts.list(),
+        api.parts.list(true),
         api.invoices.list(),
       ]);
       devices = devs.map((d) => ({ id: d.id, primary_name: d.primary_name }));
-      parts = pts.map((x) => ({ id: x.id, name: x.name, part_type: x.part_type }));
+      parts = pts.map((x) => ({
+        id: x.id,
+        name: x.name,
+        part_type: x.part_type,
+        supplier: x.supplier,
+      }));
       invoices = invs;
       plans = list;
 
@@ -158,6 +167,57 @@
     } finally {
       selectedPlanLoading = false;
     }
+  }
+
+  async function refreshPlanPartRows(
+    planId: number,
+    planPartIds: number[],
+  ): Promise<MonthlyPlanPartWithCoverage[]> {
+    const uniqueIds = [...new Set(planPartIds.filter((id) => id > 0))];
+    if (uniqueIds.length === 0) return [];
+
+    const requestVersions = new Map<number, number>();
+    for (const id of uniqueIds) {
+      const version = (planPartRefreshVersions[id] ?? 0) + 1;
+      planPartRefreshVersions[id] = version;
+      requestVersions.set(id, version);
+    }
+
+    const freshRows = uniqueIds.length === 1
+      ? [await api.monthlyPlans.partWithCoverage(planId, uniqueIds[0])]
+      : await api.monthlyPlans.partsWithCoverageByIds(planId, uniqueIds);
+
+    // The user may have changed the month while the request was in flight.
+    if (!selectedPlanDetail || currentPlanId !== planId) return [];
+
+    const applicableRows = freshRows.filter(
+      (row) => planPartRefreshVersions[row.id] === requestVersions.get(row.id),
+    );
+    const freshById = new Map<number, MonthlyPlanPartWithCoverage>();
+    for (const row of applicableRows) freshById.set(row.id, row);
+    if (freshById.size === 0) return [];
+
+    // Keep the detail object and every unaffected keyed row stable in the DOM.
+    selectedPlanDetail = {
+      ...selectedPlanDetail,
+      parts: selectedPlanDetail.parts.map((row) => freshById.get(row.id) ?? row),
+    };
+    return applicableRows;
+  }
+
+  function planPartIdsForParts(planId: number, partIds: number[]): number[] {
+    if (!selectedPlanDetail || currentPlanId !== planId) return [];
+    const wanted = new Set(partIds);
+    return selectedPlanDetail.parts
+      .filter((row) => wanted.has(row.part_id))
+      .map((row) => row.id);
+  }
+
+  function planPartIdsForInvoice(planId: number, invoiceId: number): number[] {
+    if (!selectedPlanDetail || currentPlanId !== planId) return [];
+    return selectedPlanDetail.parts
+      .filter((row) => row.invoices?.some((invoice) => invoice.invoice_id === invoiceId))
+      .map((row) => row.id);
   }
 
   async function navigateTo(month: string) {
@@ -242,7 +302,10 @@
     savingDeliveredId = row.id;
     try {
       await api.monthlyPlans.updatePlanPartDelivered(planId, row.id, String(v));
-      await load({ quiet: true });
+      const [fresh] = await refreshPlanPartRows(planId, [row.id]);
+      if (fresh) {
+        deliverDraft = { ...deliverDraft, [fresh.id]: formatIntegerQty(fresh.qty_delivered) };
+      }
     } catch (e) {
       alert((e as Error).message);
     } finally {
@@ -260,7 +323,11 @@
     savingFinalId = row.id;
     try {
       await api.monthlyPlans.updatePlanPartFinal(planId, row.id, String(v));
-      await load({ quiet: true });
+      const [fresh] = await refreshPlanPartRows(planId, [row.id]);
+      if (fresh) {
+        finalDraft = { ...finalDraft, [fresh.id]: formatIntegerQty(fresh.qty_final) };
+        deliverDraft = { ...deliverDraft, [fresh.id]: formatIntegerQty(fresh.qty_delivered) };
+      }
     } catch (e) {
       alert((e as Error).message);
     } finally {
@@ -268,11 +335,12 @@
     }
   }
 
-  async function unlinkLink(invoiceId: number, linkId: number) {
+  async function unlinkLink(invoiceId: number, linkId: number, planPartId: number) {
     if (!confirm('Отвязать счёт от этой детали в плане?')) return;
+    const planId = currentPlanId;
     try {
       await api.invoices.parts.delete(invoiceId, linkId);
-      await load({ quiet: true });
+      await refreshPlanPartRows(planId, [planPartId]);
     } catch (e) {
       alert((e as Error).message);
     }
@@ -285,10 +353,13 @@
     return devices.find((d) => d.id === id)?.id ?? id;
   }
   function partName(id: number) {
-    return parts.find((p) => p.id === id)?.name ?? id;
+    return parts.find((p) => p.id === id)?.name ?? String(id);
   }
   function partId(id: number) {
     return parts.find((p) => p.id === id)?.id ?? id;
+  }
+  function partSupplier(id: number) {
+    return parts.find((p) => p.id === id)?.supplier?.trim() || '—';
   }
   function partTypeOf(id: number): string {
     const t = (parts.find((p) => p.id === id)?.part_type ?? '').trim();
@@ -301,13 +372,20 @@
       const key = partTypeOf(p.part_id);
       (groups[key] ??= []).push(p);
     }
+    for (const group of Object.values(groups)) {
+      group.sort(
+        (a, b) =>
+          PART_NAME_COLLATOR.compare(partName(a.part_id), partName(b.part_id)) ||
+          a.part_id - b.part_id,
+      );
+    }
     return groups;
   }
 
   function comparePartGroupKeys(a: string, b: string) {
     if (a === NO_TYPE_LABEL) return 1;
     if (b === NO_TYPE_LABEL) return -1;
-    return a.localeCompare(b, 'ru');
+    return PART_NAME_COLLATOR.compare(a, b);
   }
 
   $: currentPlanId = selectedPlan ? Number(selectedPlan.id) : 0;
@@ -377,14 +455,24 @@
     if (!remaindersData) return [] as { type: string; parts: RemainderPart[] }[];
     const byType: Record<string, RemainderPart[]> = {};
     for (const p of remaindersData.remainders) (byType[typeOfPart(p.part_type)] ??= []).push(p);
-    return Object.keys(byType).sort(comparePartGroupKeys).map((type) => ({ type, parts: byType[type] }));
+    return Object.keys(byType).sort(comparePartGroupKeys).map((type) => ({
+      type,
+      parts: byType[type].sort(
+        (a, b) => PART_NAME_COLLATOR.compare(a.name, b.name) || a.part_id - b.part_id,
+      ),
+    }));
   })();
 
   $: undersupplyGroups = (() => {
     if (!remaindersData) return [] as { type: string; parts: UndersupplyPart[] }[];
     const byType: Record<string, UndersupplyPart[]> = {};
     for (const p of remaindersData.undersupply) (byType[typeOfPart(p.part_type)] ??= []).push(p);
-    return Object.keys(byType).sort(comparePartGroupKeys).map((type) => ({ type, parts: byType[type] }));
+    return Object.keys(byType).sort(comparePartGroupKeys).map((type) => ({
+      type,
+      parts: byType[type].sort(
+        (a, b) => PART_NAME_COLLATOR.compare(a.name, b.name) || a.part_id - b.part_id,
+      ),
+    }));
   })();
 
   function deliveryOk(p: MonthlyPlanPartWithCoverage) {
@@ -533,16 +621,18 @@
       alert('Выберите счёт из списка');
       return;
     }
+    const planId = linkPlanId;
+    const planPartIds = planPartIdsForParts(planId, linkPartIds);
     try {
       for (const pid of linkPartIds) {
         await api.invoices.parts.create(linkInvoiceId, {
-          plan_id: linkPlanId,
+          plan_id: planId,
           part_id: pid,
           qty_covered: linkQtyByPart[pid] || null,
         });
       }
       linkModalOpen = false;
-      await load({ quiet: true });
+      await refreshPlanPartRows(planId, planPartIds);
     } catch (e) {
       alert((e as Error).message);
     }
@@ -562,27 +652,33 @@
       alert('При создании счёта обязательно приложите файл');
       return;
     }
+    const planId = createInvoicePlanId;
+    const planPartIds = planPartIdsForParts(planId, createInvoicePartIds);
     try {
       const inv = await api.invoices.create(invoicePayload(createInvoiceForm), createInvoiceFileInput.files[0]);
+      invoices = [inv, ...invoices.filter((item) => item.id !== inv.id)];
       for (const pid of createInvoicePartIds) {
         await api.invoices.parts.create(inv.id, {
-          plan_id: createInvoicePlanId,
+          plan_id: planId,
           part_id: pid,
           qty_covered: createInvoiceQtyByPart[pid] || null,
         });
       }
       createInvoiceModalOpen = false;
-      await load({ quiet: true });
+      await refreshPlanPartRows(planId, planPartIds);
     } catch (e) {
       alert((e as Error).message);
     }
   }
 
-  async function openEditInvoiceModal(inv: PartInvoiceCoverage) {
+  async function openEditInvoiceModal(inv: PartInvoiceCoverage, planPartId: number) {
+    const planId = currentPlanId;
     try {
       const full = await api.invoices.get(inv.invoice_id);
       editInvoiceId = full.id;
       editInvoiceLinkId = inv.link_id;
+      editInvoicePlanId = planId;
+      editInvoicePlanPartId = planPartId;
       editInvoiceForm = {
         invoice_no: full.invoice_no,
         invoice_date: full.invoice_date,
@@ -600,14 +696,24 @@
   }
 
   async function saveEditInvoice() {
-    if (!editInvoiceId || !editInvoiceLinkId) return;
+    if (!editInvoiceId || !editInvoiceLinkId || !editInvoicePlanId || !editInvoicePlanPartId) return;
+    const planId = editInvoicePlanId;
+    const affectedPlanPartIds = [
+      ...new Set([
+        editInvoicePlanPartId,
+        ...planPartIdsForInvoice(planId, editInvoiceId),
+      ]),
+    ];
     try {
-      await api.invoices.update(editInvoiceId, invoicePayload(editInvoiceForm));
+      const updatedInvoice = await api.invoices.update(editInvoiceId, invoicePayload(editInvoiceForm));
+      invoices = invoices.map((invoice) =>
+        invoice.id === updatedInvoice.id ? updatedInvoice : invoice,
+      );
       await api.invoices.parts.update(editInvoiceId, editInvoiceLinkId, {
         qty_covered: editInvoiceLinkQty || null,
       });
       editInvoiceModalOpen = false;
-      await load({ quiet: true });
+      await refreshPlanPartRows(planId, affectedPlanPartIds);
     } catch (e) {
       alert((e as Error).message);
     }
@@ -618,7 +724,7 @@
     uploadingFilesPartId = planPartId;
     try {
       await api.monthlyPlans.partFiles.upload(planId, planPartId, files);
-      await load({ quiet: true });
+      await refreshPlanPartRows(planId, [planPartId]);
     } catch (e) {
       alert((e as Error).message);
     } finally {
@@ -632,7 +738,7 @@
     if (!confirm('Удалить файл?')) return;
     try {
       await api.monthlyPlans.partFiles.delete(planId, planPartId, fileId);
-      await load({ quiet: true });
+      await refreshPlanPartRows(planId, [planPartId]);
     } catch (e) {
       alert((e as Error).message);
     }
@@ -789,23 +895,34 @@
           </button>
 
           {#if expandedPartGroups[`${currentPlanId}:${groupKey}`] !== false}
-            <table class="w-full">
-              <thead class="bg-zinc-900 text-zinc-400 text-left">
+            <div class="overflow-x-auto">
+            <table class="w-full min-w-[1180px] table-fixed">
+              <colgroup>
+                <col style="width: 6%" />
+                <col style="width: 18%" />
+                <col style="width: 14%" />
+                <col style="width: 20.666%" />
+                <col style="width: 20.666%" />
+                <col style="width: 20.666%" />
+              </colgroup>
+              <thead class="bg-zinc-900 text-zinc-400">
                 <tr>
-                  <th class="px-4 py-3 font-medium">ID</th>
-                  <th class="px-4 py-3 font-medium">Деталь</th>
-                  <th class="px-4 py-3 font-medium">Итого к закупке</th>
-                  <th class="px-4 py-3 font-medium">Покрытие счетами</th>
-                  <th class="px-4 py-3 font-medium">Поставлено</th>
+                  <th class="px-3 py-3 font-medium text-center">ID</th>
+                  <th class="px-4 py-3 font-medium text-left">Деталь</th>
+                  <th class="px-4 py-3 font-medium text-left">Поставщик</th>
+                  <th class="px-4 py-3 font-medium text-center">Итого к закупке</th>
+                  <th class="px-4 py-3 font-medium text-center">Покрытие счетами</th>
+                  <th class="px-4 py-3 font-medium text-center">Поставлено</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-zinc-800">
                 {#each groupParts as p (p.id)}
                   <tr class="hover:bg-zinc-800/30">
-                    <td class="px-4 py-3 font-mono text-sm align-top">{partId(p.part_id) ?? '—'}</td>
+                    <td class="px-3 py-3 font-mono text-sm text-center align-top">{partId(p.part_id) ?? '—'}</td>
                     <td class="px-4 py-3 align-top">{partName(p.part_id)}</td>
-                    <td class="px-4 py-3 align-top">
-                      <div class="flex flex-wrap items-center gap-1.5">
+                    <td class="px-4 py-3 text-zinc-300 align-top">{partSupplier(p.part_id)}</td>
+                    <td class="px-4 py-3 text-center align-top">
+                      <div class="flex flex-wrap items-center justify-center gap-1.5">
                         <input
                           type="number"
                           step="1"
@@ -832,7 +949,7 @@
                         <div class="mt-1 text-[10px] text-zinc-500">расчёт по заказам: <span class="font-mono">{formatIntegerQty(p.qty_required)}</span></div>
                       {/if}
                     </td>
-                    <td class="px-4 py-3 align-top">
+                    <td class="px-4 py-3 text-center align-top">
                       <div
                         class="mb-1 rounded border px-2 py-1 text-[11px] {coverageOk(p)
                           ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-200'
@@ -842,7 +959,7 @@
                         из <span class="font-mono">{formatIntegerQty(p.qty_final)}</span>
                       </div>
                       {#if p.has_invoice}
-                        <ul class="mt-2 space-y-1.5 text-[11px]">
+                        <ul class="mt-2 space-y-1.5 text-left text-[11px]">
                           {#each p.invoices ?? [] as inv}
                             {@const isExpanded = !!expandedInvoiceLinks[inv.link_id]}
                             <li
@@ -867,14 +984,14 @@
                                   <button
                                     type="button"
                                     class="shrink-0 text-xs text-amber-300 hover:text-amber-200 underline"
-                                    on:click|stopPropagation={() => openEditInvoiceModal(inv)}
+                                    on:click|stopPropagation={() => openEditInvoiceModal(inv, p.id)}
                                   >
                                     Изм.
                                   </button>
                                   <button
                                     type="button"
                                     class="shrink-0 text-xs text-red-300 hover:text-red-200 underline"
-                                    on:click|stopPropagation={() => unlinkLink(inv.invoice_id, inv.link_id)}
+                                    on:click|stopPropagation={() => unlinkLink(inv.invoice_id, inv.link_id, p.id)}
                                   >
                                     Отвязать
                                   </button>
@@ -922,7 +1039,7 @@
                           {/each}
                         </ul>
                       {/if}
-                      <div class="mt-2 flex flex-wrap gap-2">
+                      <div class="mt-2 flex flex-wrap justify-center gap-2">
                         <button
                           type="button"
                           on:click={() => openLinkModal(currentPlanId, [p.part_id])}
@@ -940,14 +1057,14 @@
                       </div>
                     </td>
                     <td
-                      class="px-4 py-3 align-top {deliveryOk(p)
+                      class="px-4 py-3 text-center align-top {deliveryOk(p)
                         ? 'bg-emerald-500/15 border-l-2 border-emerald-500/40'
                         : 'bg-red-500/15 border-l-2 border-red-500/40'}"
                     >
                       {#if !p.has_invoice}
                         <span class="text-zinc-500 text-sm">После привязки счёта</span>
                       {:else}
-                        <div class="flex flex-wrap items-end gap-2">
+                        <div class="flex flex-wrap items-end justify-center gap-2">
                           <div>
                             <label class="sr-only" for="del-{p.id}">Поставлено из {p.qty_final}</label>
                             <input
@@ -981,7 +1098,7 @@
                       <!-- Delivery files -->
                       <div class="mt-3">
                         {#if (p.files ?? []).length > 0}
-                          <div class="space-y-1 mb-2">
+                          <div class="space-y-1 mb-2 text-left">
                             {#each p.files ?? [] as f (f.id)}
                               <div class="flex items-center gap-2 rounded bg-black/20 px-2 py-1 text-[11px]">
                                 <div class="min-w-0 flex-1">
@@ -1028,6 +1145,7 @@
                 {/each}
               </tbody>
             </table>
+            </div>
           {/if}
         </div>
       {/each}

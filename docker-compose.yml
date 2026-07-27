@@ -16,16 +16,27 @@ services:
       retries: 6
       start_period: 90s
     environment:
-      DATABASE_URL: ${DATABASE_URL}
-      DATABASE_SSL: ${DATABASE_SSL:-false}
-      DATABASE_SSL_VERIFY: ${DATABASE_SSL_VERIFY:-true}
-      CORS_ORIGINS: ${CORS_ORIGINS}
-      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN}
-      SEED_ON_STARTUP: ${SEED_ON_STARTUP:-true}
-      FORCE_RESEED: ${FORCE_RESEED:-false}
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      DATABASE_SSL: ${DATABASE_SSL:?Set DATABASE_SSL in .env}
+      DATABASE_SSL_VERIFY: ${DATABASE_SSL_VERIFY:?Set DATABASE_SSL_VERIFY in .env}
+      DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:?Set DB_CONNECT_TIMEOUT in .env}
+      DB_COMMAND_TIMEOUT: ${DB_COMMAND_TIMEOUT:?Set DB_COMMAND_TIMEOUT in .env}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:?Set DB_POOL_SIZE in .env}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:?Set DB_MAX_OVERFLOW in .env}
+      DB_CONNECTION_BUDGET: ${DB_CONNECTION_BUDGET:?Set DB_CONNECTION_BUDGET in .env}
+      DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:?Set DB_POOL_TIMEOUT in .env}
+      DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:?Set DB_POOL_RECYCLE in .env}
+      LOG_LEVEL: ${LOG_LEVEL:?Set LOG_LEVEL in .env}
+      LOG_REQUESTS: ${LOG_REQUESTS:?Set LOG_REQUESTS in .env}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:?Set SESSION_TTL_HOURS in .env}
+      SESSION_IDLE_RENEW_MINUTES: ${SESSION_IDLE_RENEW_MINUTES:?Set SESSION_IDLE_RENEW_MINUTES in .env}
+      CORS_ORIGINS: ${CORS_ORIGINS:?Set CORS_ORIGINS in .env}
+      PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN in .env}
+      SEED_ON_STARTUP: ${SEED_ON_STARTUP:?Set SEED_ON_STARTUP in .env}
+      FORCE_RESEED: ${FORCE_RESEED:?Set FORCE_RESEED in .env}
       # ВНИМАНИЕ: WIPE_DB=true при КАЖДОМ старте полностью удаляет и пересоздаёт схему БД (drop_all+create_all).
       # Использовать разово для чистого развёртывания, затем вернуть false.
-      WIPE_DB: ${WIPE_DB:-false}
+      WIPE_DB: ${WIPE_DB:?Set WIPE_DB in .env}
 
   frontend:
     build:
@@ -44,11 +55,11 @@ services:
       retries: 6
       start_period: 60s
     environment:
-      ORIGIN: ${PUBLIC_ORIGIN}
-      BACKEND_ORIGIN: http://backend:8000
-      PROTOCOL_HEADER: x-forwarded-proto
-      HOST_HEADER: x-forwarded-host
-      BODY_SIZE_LIMIT: 104857600
+      ORIGIN: ${FRONTEND_ORIGIN:?Set FRONTEND_ORIGIN in .env}
+      BACKEND_ORIGIN: ${FRONTEND_BACKEND_ORIGIN:?Set FRONTEND_BACKEND_ORIGIN in .env}
+      PROTOCOL_HEADER: ${FRONTEND_PROTOCOL_HEADER:?Set FRONTEND_PROTOCOL_HEADER in .env}
+      HOST_HEADER: ${FRONTEND_HOST_HEADER:?Set FRONTEND_HOST_HEADER in .env}
+      BODY_SIZE_LIMIT: ${FRONTEND_BODY_SIZE_LIMIT:?Set FRONTEND_BODY_SIZE_LIMIT in .env}
     depends_on:
       backend:
         condition: service_healthy

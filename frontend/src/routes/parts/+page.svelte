@@ -5,12 +5,14 @@
 
   const NO_TYPE_LABEL = 'Без типа';
   const EXPANDED_STORAGE_KEY = 'parts:expandedGroups';
+  const PART_NAME_COLLATOR = new Intl.Collator('ru', { sensitivity: 'base', numeric: true });
 
   let parts: Part[] = [];
   let partTypes: string[] = [];
   let loading = true;
+  let loadError = '';
   let modalOpen = false;
-  let form: PartCreate = { name: '', cipher: null, article: null, part_type: null, description: null };
+  let form: PartCreate = { name: '', cipher: null, article: null, part_type: null, supplier: null, description: null };
   let editingId: number | null = null;
   let editingIsArchived = false;
   let searchQuery = '';
@@ -25,9 +27,13 @@
   $: filteredTypeOptions = filterTypeOptions(partTypes, typeQuery);
 
   onMount(() => {
-    load();
-    loadTypes();
+    void loadPage();
   });
+
+  async function loadPage() {
+    await load();
+    await loadTypes();
+  }
 
   function loadExpanded(): Record<string, boolean> {
     if (typeof localStorage === 'undefined') return {};
@@ -50,10 +56,13 @@
 
   async function load() {
     loading = true;
+    loadError = '';
     try {
       parts = await api.parts.list(true);
     } catch (e) {
       console.error(e);
+      parts = [];
+      loadError = (e as Error).message || 'Не удалось загрузить детали';
     } finally {
       loading = false;
     }
@@ -70,7 +79,7 @@
   function openCreate() {
     editingId = null;
     editingIsArchived = false;
-    form = { name: '', cipher: null, article: null, part_type: null, description: null };
+    form = { name: '', cipher: null, article: null, part_type: null, supplier: null, description: null };
     typeQuery = '';
     typeDropdownOpen = false;
     modalOpen = true;
@@ -84,6 +93,7 @@
       cipher: p.cipher ?? null,
       article: p.article ?? null,
       part_type: p.part_type ?? null,
+      supplier: p.supplier ?? null,
       description: p.description ?? null,
     };
     typeQuery = p.part_type ?? '';
@@ -96,7 +106,7 @@
     const needle = query.trim().toLowerCase();
     if (!needle) return visible;
     return visible.filter((p) => {
-      const haystack = `${p.name ?? ''} ${p.cipher ?? ''} ${p.article ?? ''} ${p.part_type ?? ''} ${p.description ?? ''}`.toLowerCase();
+      const haystack = `${p.name ?? ''} ${p.cipher ?? ''} ${p.article ?? ''} ${p.part_type ?? ''} ${p.supplier ?? ''} ${p.description ?? ''}`.toLowerCase();
       return haystack.includes(needle);
     });
   }
@@ -112,13 +122,16 @@
       const key = groupKey(p);
       (groups[key] ??= []).push(p);
     }
+    for (const group of Object.values(groups)) {
+      group.sort((a, b) => PART_NAME_COLLATOR.compare(a.name, b.name) || a.id - b.id);
+    }
     return groups;
   }
 
   function compareGroupKeys(a: string, b: string) {
     if (a === NO_TYPE_LABEL) return 1;
     if (b === NO_TYPE_LABEL) return -1;
-    return a.localeCompare(b, 'ru');
+    return PART_NAME_COLLATOR.compare(a, b);
   }
 
   function isExpanded(key: string): boolean {
@@ -225,7 +238,7 @@
       <input
         id="part-search"
         bind:value={searchQuery}
-        placeholder="Название, шифр, артикул, описание..."
+        placeholder="Название, шифр, артикул, поставщик, описание..."
         class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
       />
     </div>
@@ -237,6 +250,18 @@
 
   {#if loading}
     <p class="text-zinc-400">Загрузка...</p>
+  {:else if loadError}
+    <div class="rounded-xl border border-red-800 bg-red-950/40 px-4 py-4 text-red-200">
+      <p class="font-medium">Не удалось загрузить детали</p>
+      <p class="mt-1 text-sm text-red-300">{loadError}</p>
+      <button
+        type="button"
+        on:click={loadPage}
+        class="mt-3 rounded-lg border border-red-700 px-3 py-1.5 text-sm hover:bg-red-900/60"
+      >
+        Повторить
+      </button>
+    </div>
   {:else if filteredParts.length === 0}
     <div class="rounded-xl border border-zinc-700 px-4 py-6 text-center text-zinc-400">Ничего не найдено.</div>
   {:else}
@@ -268,13 +293,14 @@
           </button>
           {#if expanded[key] !== false}
             <div class="overflow-x-auto">
-              <table class="w-full min-w-[1100px] table-fixed">
+              <table class="w-full min-w-[1200px] table-fixed">
                 <colgroup>
                   <col class="w-[7%]" />
-                  <col class="w-[59%]" />
+                  <col class="w-[35%]" />
                   <col class="w-[14%]" />
                   <col class="w-[10%]" />
-                  <col class="w-[10%]" />
+                  <col class="w-[14%]" />
+                  <col class="w-[20%]" />
                 </colgroup>
                 <thead class="bg-zinc-900 text-zinc-400 text-left">
                   <tr>
@@ -282,6 +308,7 @@
                     <th class="px-4 py-2 font-medium text-sm">Название</th>
                     <th class="px-4 py-2 font-medium text-sm">Шифр</th>
                     <th class="px-4 py-2 font-medium text-sm">Артикул</th>
+                    <th class="px-4 py-2 font-medium text-sm">Поставщик</th>
                     <th class="px-4 py-2 font-medium text-sm">Описание</th>
                   </tr>
                 </thead>
@@ -305,6 +332,7 @@
                       </td>
                       <td class="px-4 py-3 text-zinc-300 truncate" title={p.cipher || undefined}>{p.cipher || '—'}</td>
                       <td class="px-4 py-3 text-zinc-300 truncate" title={p.article || undefined}>{p.article || '—'}</td>
+                      <td class="px-4 py-3 text-zinc-300 truncate" title={p.supplier || undefined}>{p.supplier || '—'}</td>
                       <td class="px-4 py-3 text-zinc-400 truncate" title={p.description || undefined}>{p.description || '—'}</td>
                     </tr>
                   {/each}
@@ -345,6 +373,15 @@
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Артикул</label>
           <input bind:value={form.article} placeholder="Опционально" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
+        </div>
+        <div>
+          <label class="block text-sm text-zinc-400 mb-1">Поставщик</label>
+          <input
+            bind:value={form.supplier}
+            maxlength="255"
+            placeholder="Опционально, до 255 символов"
+            class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
+          />
         </div>
         <div>
           <label class="block text-sm text-zinc-400 mb-1" for="part-type-input">Тип детали</label>
