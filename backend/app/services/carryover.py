@@ -1,8 +1,8 @@
-"""Сквозной перенос остатков деталей между месячными планами («дельта»).
+"""Сквозной учёт остатков деталей между месячными планами.
 
-Идея: если по детали в каком-то месяце заказали счетами больше, чем требовалось,
-излишек переносится в следующие месяцы (FIFO по дате счёта) и автоматически
-закрывает их потребность, создавая привязку счёта-источника к детали в новом плане.
+Источники остатка: излишки ручных привязок счетов и положительные результаты
+проведённой инвентаризации. Они хранятся раздельными FIFO-лотами и автоматически
+закрывают потребность следующих месяцев, сохраняя происхождение количества.
 
 Перенос считается сквозным по всем месяцам, поэтому пересобирается целиком при любом
 изменении планов или ручных привязок счетов (см. recompute_carryover_links).
@@ -13,12 +13,15 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
     Invoice,
     InvoicePartLink,
+    InventoryDocument,
+    InventoryItem,
+    InventoryPlanAllocation,
     MonthlyPlan,
     MonthlyPlanPart,
     Part,
@@ -55,8 +58,24 @@ class CarryoverResult:
     undersupply: dict[int, dict[date, Decimal]]
     # part_id -> { month -> перезаказ за месяц (излишек, ставший остатком) }
     overorders: dict[int, dict[date, Decimal]]
+    # part_id -> { month -> найдено дополнительно при проведённой инвентаризации }
+    inventory_additions: dict[int, dict[date, Decimal]]
+    # part_id -> { month -> сколько инвентаризационного остатка закрыло потребность }
+    inventory_consumed: dict[int, dict[date, Decimal]]
+    # part_id -> { month -> остаток на конец месяца отдельно по источникам }
+    invoice_balances: dict[int, dict[date, Decimal]]
+    inventory_balances: dict[int, dict[date, Decimal]]
     # Привязки, которые надо создать как авто-перенос: (invoice_id, plan_id, part_id, qty)
     links_to_create: list[tuple[int, int, int, Decimal]] = field(default_factory=list)
+    # Автораспределения инвентаризации: (inventory_item_id, plan_id, part_id, qty)
+    inventory_allocations_to_create: list[tuple[int, int, int, Decimal]] = field(default_factory=list)
+
+
+@dataclass
+class StockLot:
+    source_kind: str  # invoice | inventory
+    source_id: int
+    remaining: Decimal
 
 
 async def compute_carryover(session: AsyncSession) -> CarryoverResult:
@@ -76,7 +95,17 @@ async def compute_carryover(session: AsyncSession) -> CarryoverResult:
     month_by_plan = {pid: m for m, pid in plan_by_month.items()}
 
     result = CarryoverResult(
-        months=months, parts={}, balances={}, undersupply={}, overorders={}, links_to_create=[]
+        months=months,
+        parts={},
+        balances={},
+        undersupply={},
+        overorders={},
+        inventory_additions={},
+        inventory_consumed={},
+        invoice_balances={},
+        inventory_balances={},
+        links_to_create=[],
+        inventory_allocations_to_create=[],
     )
     if not plan_ids:
         return result
@@ -118,8 +147,30 @@ async def compute_carryover(session: AsyncSession) -> CarryoverResult:
         qty = Decimal(qty_covered) if qty_covered is not None else ZERO
         manual.setdefault(part_id, {}).setdefault(month, []).append((invoice_date, invoice_id, qty))
 
+    # Проведённые инвентаризации — самостоятельные физические FIFO-лоты. Документ
+    # относится к календарному месяцу и не зависит от ревизии плана.
+    inventory: dict[int, dict[date, list[tuple[int, Decimal]]]] = {}
+    inventory_res = await session.execute(
+        select(
+            InventoryDocument.month,
+            InventoryItem.id,
+            InventoryItem.part_id,
+            InventoryItem.qty_found,
+        )
+        .join(InventoryItem, InventoryItem.inventory_id == InventoryDocument.id)
+        .where(
+            InventoryDocument.status == "posted",
+            InventoryDocument.month.in_(months),
+        )
+        .order_by(InventoryDocument.month, InventoryItem.id)
+    )
+    for month, item_id, part_id, qty_found in inventory_res.all():
+        inventory.setdefault(part_id, {}).setdefault(month, []).append(
+            (item_id, Decimal(qty_found))
+        )
+
     # Метаданные деталей
-    part_ids = set(required.keys()) | set(manual.keys())
+    part_ids = set(required.keys()) | set(manual.keys()) | set(inventory.keys())
     if part_ids:
         meta_res = await session.execute(
             select(Part.id, Part.name, Part.part_type).where(Part.id.in_(part_ids))
@@ -132,30 +183,44 @@ async def compute_carryover(session: AsyncSession) -> CarryoverResult:
         result.balances[part_id] = {}
         result.undersupply[part_id] = {}
         result.overorders[part_id] = {}
+        result.inventory_additions[part_id] = {}
+        result.inventory_consumed[part_id] = {}
+        result.invoice_balances[part_id] = {}
+        result.inventory_balances[part_id] = {}
         req_by_month = required.get(part_id, {})
         manual_by_month = manual.get(part_id, {})
-        # FIFO-лоты остатка: [[invoice_id, remaining]]
-        lots: list[list] = []
+        inventory_by_month = inventory.get(part_id, {})
+        lots: list[StockLot] = []
 
         for month in months:
             plan_id = plan_by_month[month]
             need = req_by_month.get(month, ZERO)
             month_manual = sorted(manual_by_month.get(month, []), key=lambda t: (t[0], t[1]))
-            manual_total = sum((q for _, _, q in month_manual), ZERO)
+            month_inventory = inventory_by_month.get(month, [])
+            inventory_added = sum((qty for _, qty in month_inventory), ZERO)
+            inventory_used = ZERO
 
-            # Шаг A: перенос покрывает потребность первым (старые счета первыми)
+            # Шаг A: старые физические/счётные остатки закрывают потребность первыми.
             remaining_need = need
             for lot in lots:
                 if remaining_need <= ZERO:
                     break
-                take = min(lot[1], remaining_need)
+                take = min(lot.remaining, remaining_need)
                 if take > ZERO:
-                    lot[1] -= take
+                    lot.remaining -= take
                     remaining_need -= take
-                    result.links_to_create.append((lot[0], plan_id, part_id, take))
-            lots = [lot for lot in lots if lot[1] > ZERO]
+                    if lot.source_kind == "invoice":
+                        result.links_to_create.append((lot.source_id, plan_id, part_id, take))
+                    else:
+                        inventory_used += take
+                        result.inventory_allocations_to_create.append(
+                            (lot.source_id, plan_id, part_id, take)
+                        )
+            lots = [lot for lot in lots if lot.remaining > ZERO]
 
-            # Шаг B: свои счета месяца добивают остаток потребности, излишек → новые лоты
+            # Шаг B: уже привязанные к месяцу счета закрывают потребность. Инвентаризация
+            # не должна задним числом вытеснять такой счёт из плана и превращать его в
+            # ложный перезаказ — особенно если поставка по нему уже отмечена.
             overorder = ZERO
             for _inv_date, invoice_id, qty in month_manual:
                 avail = qty
@@ -164,14 +229,40 @@ async def compute_carryover(session: AsyncSession) -> CarryoverResult:
                     remaining_need -= used
                     avail -= used
                 if avail > ZERO:
-                    lots.append([invoice_id, avail])
+                    lots.append(StockLot("invoice", invoice_id, avail))
                     overorder += avail
 
+            # Шаг C: найденное в этом месяце закрывает только оставшуюся после счетов
+            # потребность. Неиспользованное количество становится физическим остатком.
+            for inventory_item_id, qty in month_inventory:
+                avail = qty
+                if remaining_need > ZERO:
+                    used = min(avail, remaining_need)
+                    if used > ZERO:
+                        remaining_need -= used
+                        avail -= used
+                        inventory_used += used
+                        result.inventory_allocations_to_create.append(
+                            (inventory_item_id, plan_id, part_id, used)
+                        )
+                if avail > ZERO:
+                    lots.append(StockLot("inventory", inventory_item_id, avail))
+
             result.overorders[part_id][month] = overorder
-            result.balances[part_id][month] = sum((lot[1] for lot in lots), ZERO)
-            # Недозаказ — без учёта переносов: потребность минус ручной заказ месяца
-            shortfall = need - manual_total
-            result.undersupply[part_id][month] = shortfall if shortfall > ZERO else ZERO
+            result.inventory_additions[part_id][month] = inventory_added
+            result.inventory_consumed[part_id][month] = inventory_used
+            invoice_balance = sum(
+                (lot.remaining for lot in lots if lot.source_kind == "invoice"), ZERO
+            )
+            inventory_balance = sum(
+                (lot.remaining for lot in lots if lot.source_kind == "inventory"), ZERO
+            )
+            result.invoice_balances[part_id][month] = invoice_balance
+            result.inventory_balances[part_id][month] = inventory_balance
+            result.balances[part_id][month] = invoice_balance + inventory_balance
+            # Фактический недозаказ: после учёта старых остатков, найденного на
+            # инвентаризации и ручных счетов текущего месяца.
+            result.undersupply[part_id][month] = remaining_need
 
     return result
 
@@ -185,11 +276,10 @@ async def recompute_carryover_links(session: AsyncSession) -> None:
     """
     await acquire_carryover_lock(session)
     await session.execute(delete(InvoicePartLink).where(InvoicePartLink.is_carryover.is_(True)))
+    await session.execute(delete(InventoryPlanAllocation))
     await session.flush()
 
     result = await compute_carryover(session)
-    if not result.links_to_create:
-        return
 
     # Свернуть по (invoice, plan, part): один счёт может закрыть деталь несколькими лотами
     aggregated: dict[tuple[int, int, int], Decimal] = {}
@@ -221,4 +311,51 @@ async def recompute_carryover_links(session: AsyncSession) -> None:
                 is_carryover=True,
             )
         )
+
+    inventory_aggregated: dict[tuple[int, int, int], Decimal] = {}
+    for inventory_item_id, plan_id, part_id, qty in result.inventory_allocations_to_create:
+        key = (inventory_item_id, plan_id, part_id)
+        inventory_aggregated[key] = inventory_aggregated.get(key, ZERO) + qty
+
+    for (inventory_item_id, plan_id, part_id), qty in inventory_aggregated.items():
+        session.add(
+            InventoryPlanAllocation(
+                inventory_item_id=inventory_item_id,
+                plan_id=plan_id,
+                part_id=part_id,
+                qty_covered=qty,
+            )
+        )
     await session.flush()
+
+    # qty_delivered хранит только поставку по счетам. Если новый пересчёт отдал часть
+    # потребности физическому остатку из инвентаризации, старое ручное значение могло
+    # оказаться выше оставшейся потребности и дать двойной физический учёт. Подрезаем
+    # только превышение; при отмене инвентаризации значение автоматически не растёт.
+    if inventory_aggregated:
+        allocation_res = await session.execute(
+            select(
+                InventoryPlanAllocation.plan_id,
+                InventoryPlanAllocation.part_id,
+                func.sum(InventoryPlanAllocation.qty_covered),
+            ).group_by(
+                InventoryPlanAllocation.plan_id,
+                InventoryPlanAllocation.part_id,
+            )
+        )
+        inventory_by_plan_part = {
+            (plan_id, part_id): Decimal(qty)
+            for plan_id, part_id, qty in allocation_res.all()
+        }
+        affected_plan_ids = {plan_id for plan_id, _part_id in inventory_by_plan_part}
+        plan_parts_res = await session.execute(
+            select(MonthlyPlanPart).where(MonthlyPlanPart.plan_id.in_(affected_plan_ids))
+        )
+        for plan_part in plan_parts_res.scalars().all():
+            inventory_qty = inventory_by_plan_part.get(
+                (plan_part.plan_id, plan_part.part_id), ZERO
+            )
+            max_invoice_delivery = max(plan_part.qty_final - inventory_qty, ZERO)
+            if plan_part.qty_delivered > max_invoice_delivery:
+                plan_part.qty_delivered = max_invoice_delivery
+        await session.flush()

@@ -284,6 +284,16 @@ export const api = {
       };
     },
     remainders: () => fetchApi<RemaindersMatrix>('/monthly-plans/remainders'),
+    inventory: {
+      get: (month: string) => fetchApi<InventoryDocument | null>(`/monthly-plans/inventory/${month}`),
+      save: (month: string, data: InventoryDocumentUpsert) =>
+        fetchApi<InventoryDocument>(`/monthly-plans/inventory/${month}`, {
+          method: 'POST',
+          body: JSON.stringify(data),
+        }),
+      cancel: (month: string) =>
+        fetchApi<InventoryDocument>(`/monthly-plans/inventory/${month}`, { method: 'DELETE' }),
+    },
     updatePlanPartDelivered: (planId: number, planPartId: number, qty_delivered: string) =>
       fetchApi<MonthlyPlanPart>(`/monthly-plans/${planId}/parts/${planPartId}`, {
         method: 'PATCH',
@@ -659,8 +669,16 @@ export interface RemainderPart {
   part_type: string | null;
   /** Общий остаток на конец последнего рассчитанного месяца */
   remainder: string;
+  /** Текущий остаток, происходящий из излишков счетов */
+  invoice_remainder: string;
+  /** Текущий физический остаток, происходящий из инвентаризаций */
+  inventory_remainder: string;
   /** month (YYYY-MM-DD) -> перезаказ за месяц (>0) */
   overorders: Record<string, string>;
+  /** month (YYYY-MM-DD) -> дополнительно найдено при инвентаризации */
+  inventory_additions: Record<string, string>;
+  /** month (YYYY-MM-DD) -> использовано из инвентаризационного остатка */
+  inventory_consumed: Record<string, string>;
 }
 
 export interface UndersupplyPart {
@@ -676,6 +694,35 @@ export interface RemaindersMatrix {
   remainders: RemainderPart[];
   undersupply: UndersupplyPart[];
 }
+export interface InventoryItem {
+  id: number;
+  part_id: number;
+  qty_found: string;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export interface InventoryDocument {
+  id: number;
+  month: string;
+  status: 'posted' | 'cancelled';
+  note: string | null;
+  created_by_user_id: number | null;
+  updated_by_user_id: number | null;
+  created_at: string;
+  updated_at: string;
+  items: InventoryItem[];
+}
+export interface InventoryDocumentUpsert {
+  note?: string | null;
+  items: { part_id: number; qty_found: string; note?: string | null }[];
+}
+export interface InventoryAllocation {
+  inventory_id: number;
+  inventory_item_id: number;
+  month: string;
+  qty_covered: string;
+}
 export interface PlanPartFile {
   id: number;
   filename: string;
@@ -686,7 +733,12 @@ export interface PlanPartFile {
 export interface MonthlyPlanPartWithCoverage extends MonthlyPlanPart {
   has_invoice: boolean;
   invoices?: PartInvoiceCoverage[];
+  has_inventory?: boolean;
+  inventory_allocations?: InventoryAllocation[];
+  qty_invoice_covered_total?: string;
+  qty_inventory_covered_total?: string;
   qty_covered_total?: string;
+  qty_available_total?: string;
   coverage_complete?: boolean;
   /** После обновления API; иначе считается по qty_delivered и qty_required */
   delivery_complete?: boolean;

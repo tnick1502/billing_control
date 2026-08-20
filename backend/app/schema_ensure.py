@@ -200,6 +200,48 @@ _PG_STATEMENTS = [
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS details TEXT",
 ]
 
+# Инвентаризация хранится отдельно от счетов. Последняя таблица — производный кэш
+# распределения физически найденных остатков по строкам планов; он пересобирается
+# атомарно вместе с обычными переносами.
+_PG_INVENTORY_SCHEMA = [
+    """CREATE TABLE IF NOT EXISTS inventory_documents (
+        id SERIAL PRIMARY KEY,
+        month DATE NOT NULL,
+        status VARCHAR(16) NOT NULL DEFAULT 'posted',
+        note TEXT,
+        created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        updated_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT uq_inventory_documents_month UNIQUE (month),
+        CONSTRAINT ck_inventory_documents_status CHECK (status IN ('posted', 'cancelled')),
+        CONSTRAINT ck_inventory_documents_month_start
+            CHECK (month = date_trunc('month', month)::date)
+    )""",
+    """CREATE TABLE IF NOT EXISTS inventory_items (
+        id SERIAL PRIMARY KEY,
+        inventory_id INTEGER NOT NULL REFERENCES inventory_documents(id) ON DELETE CASCADE,
+        part_id INTEGER NOT NULL REFERENCES parts(id) ON DELETE RESTRICT,
+        qty_found NUMERIC(18,6) NOT NULL,
+        note TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT uq_inventory_items_inventory_part UNIQUE (inventory_id, part_id),
+        CONSTRAINT ck_inventory_items_qty_found_positive CHECK (qty_found > 0)
+    )""",
+    """CREATE TABLE IF NOT EXISTS inventory_plan_allocations (
+        id SERIAL PRIMARY KEY,
+        inventory_item_id INTEGER NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE,
+        plan_id INTEGER NOT NULL REFERENCES monthly_plans(id) ON DELETE CASCADE,
+        part_id INTEGER NOT NULL REFERENCES parts(id) ON DELETE CASCADE,
+        qty_covered NUMERIC(18,6) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT uq_inventory_plan_allocations_source_plan_part
+            UNIQUE (inventory_item_id, plan_id, part_id),
+        CONSTRAINT ck_inventory_plan_allocations_qty_positive CHECK (qty_covered > 0)
+    )""",
+]
+
 # Индексы по внешним ключам/частым фильтрам. PostgreSQL НЕ индексирует FK автоматически —
 # без этого на удалённой БД растущие таблицы дают seq-scan (медленные планы/счета/статистика).
 # Все CREATE INDEX IF NOT EXISTS идемпотентны.
@@ -219,6 +261,9 @@ _PG_INDEXES = [
     # Поиск по file_id (составной PK ведёт по другому столбцу): удаление файлов-сирот и проверка доступа к скачиванию.
     "CREATE INDEX IF NOT EXISTS ix_invoice_files_file_id ON invoice_files (file_id)",
     "CREATE INDEX IF NOT EXISTS ix_monthly_plan_part_files_file_id ON monthly_plan_part_files (file_id)",
+    "CREATE INDEX IF NOT EXISTS ix_inventory_items_part_id ON inventory_items (part_id)",
+    "CREATE INDEX IF NOT EXISTS ix_inventory_plan_allocations_plan_part ON inventory_plan_allocations (plan_id, part_id)",
+    "CREATE INDEX IF NOT EXISTS ix_inventory_plan_allocations_inventory_item_id ON inventory_plan_allocations (inventory_item_id)",
 ]
 
 # Вложения: таблица байтов и приведение старых колонок files к текущей модели (если были)
@@ -286,7 +331,12 @@ async def ensure_schema() -> None:
         log.warning("schema_ensure: пропуск для dialect=%s", dialect)
         return
 
-    statements = list(_PG_STATEMENTS) + _PG_FILES_BYTEA_MIGRATION + _PG_INDEXES
+    statements = (
+        list(_PG_STATEMENTS)
+        + _PG_FILES_BYTEA_MIGRATION
+        + _PG_INVENTORY_SCHEMA
+        + _PG_INDEXES
+    )
     failures: list[str] = []
     async with engine.begin() as conn:
         for sql in statements:

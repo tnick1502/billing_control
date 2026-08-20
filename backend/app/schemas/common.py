@@ -362,6 +362,49 @@ class MonthlyPlanPartUpdate(BaseModel):
         return self
 
 
+class InventoryItemUpsert(BaseModel):
+    part_id: int = Field(gt=0)
+    qty_found: Decimal = Field(gt=0, le=Decimal("999999999999.999999"))
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class InventoryDocumentUpsert(BaseModel):
+    note: str | None = Field(default=None, max_length=5000)
+    items: list[InventoryItemUpsert] = Field(min_length=1, max_length=5000)
+
+    @model_validator(mode="after")
+    def unique_parts(self) -> "InventoryDocumentUpsert":
+        part_ids = [item.part_id for item in self.items]
+        if len(part_ids) != len(set(part_ids)):
+            raise ValueError("Каждую деталь можно добавить в инвентаризацию только один раз")
+        return self
+
+
+class InventoryItemRead(BaseModel):
+    id: int
+    part_id: int
+    qty_found: Decimal
+    note: str | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True, json_encoders={Decimal: decimal_to_str})
+
+
+class InventoryDocumentRead(BaseModel):
+    id: int
+    month: date
+    status: str
+    note: str | None
+    created_by_user_id: int | None
+    updated_by_user_id: int | None
+    created_at: datetime
+    updated_at: datetime
+    items: list[InventoryItemRead]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class MonthlyPlanInvoiceLinkBatchItem(BaseModel):
     """Одна строка атомарной привязки счёта к деталям месячного плана."""
 

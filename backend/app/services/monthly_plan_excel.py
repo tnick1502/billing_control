@@ -404,11 +404,11 @@ def build_monthly_plan_xlsx(
         "Артикул",
         "Расчётная потребность",
         "Итого к закупке",
-        "Покрыто счетами",
+        "Обеспечено всего",
         "Осталось покрыть",
         "Поставлено",
         "Осталось поставить",
-        "Статус счетов",
+        "Статус обеспечения",
         "Статус поставки",
     ]
     details.write_row(4, 0, detail_headers, header_fmt)
@@ -640,7 +640,7 @@ def build_monthly_plan_xlsx(
         _kpi_format(total_final),
         _decimal_number(total_final),
     )
-    summary.merge_range("G8:H8", "Покрыто счетами", kpi_label_fmt)
+    summary.merge_range("G8:H8", "Обеспечено", kpi_label_fmt)
     summary.merge_range("G9:H10", "", kpi_value_fmt)
     summary.write_formula(
         "G9",

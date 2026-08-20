@@ -2,9 +2,10 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import { formatQty, formatIntegerQty, formatAmount, formatDate, formatDateTime, formatFileSize } from '$lib/format';
-  import type { MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPartWithCoverage, InvoiceCreate, Invoice, PartInvoiceCoverage, InvoiceFileInfo, PlanPartFile, RemaindersMatrix, RemainderPart, UndersupplyPart } from '$lib/api';
+  import type { MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPartWithCoverage, InvoiceCreate, Invoice, PartInvoiceCoverage, InvoiceFileInfo, PlanPartFile, RemaindersMatrix, RemainderPart, UndersupplyPart, InventoryDocument, Part } from '$lib/api';
 
   type PlanDetail = { devices: MonthlyPlanDevice[]; parts: MonthlyPlanPartWithCoverage[] };
+  type InventoryDraftRow = { part_id: number; qty_found: string; note: string };
 
   const NO_TYPE_LABEL = 'Без типа';
   const PART_GROUPS_STORAGE_KEY = 'monthly-plans:expandedPartGroups:v2';
@@ -17,7 +18,7 @@
   let initialized = false;
 
   let devices: { id: number; primary_name: string }[] = [];
-  let parts: { id: number; name: string; part_type: string | null; supplier: string | null }[] = [];
+  let parts: Part[] = [];
   let invoices: Invoice[] = [];
   let expandedPartGroups: Record<string, boolean> = loadExpandedPartGroups();
   let selectedPlanPartIds: number[] = [];
@@ -49,6 +50,16 @@
   let remaindersData: RemaindersMatrix | null = null;
   let expandedRemainderGroups: Record<string, boolean> = {};
   let expandedRemainderParts: Record<number, boolean> = {};
+
+  let inventoryModalOpen = false;
+  let inventoryLoading = false;
+  let inventorySaving = false;
+  let inventoryError = '';
+  let inventoryMonth = '';
+  let inventoryDocument: InventoryDocument | null = null;
+  let inventoryRows: InventoryDraftRow[] = [];
+  let inventoryNote = '';
+  let inventorySearch = '';
 
   let loading = true;
   let loadError = '';
@@ -120,12 +131,7 @@
         api.invoices.list(),
       ]);
       devices = devs.map((d) => ({ id: d.id, primary_name: d.primary_name }));
-      parts = pts.map((x) => ({
-        id: x.id,
-        name: x.name,
-        part_type: x.part_type,
-        supplier: x.supplier,
-      }));
+      parts = pts;
       invoices = invs;
       plans = list;
 
@@ -297,7 +303,7 @@
   async function submitDelivered(planId: number, row: MonthlyPlanPartWithCoverage) {
     const raw = deliverDraft[row.id] ?? formatIntegerQty(row.qty_delivered);
     const v = Math.round(Number(raw));
-    const max = effectiveTarget(row);
+    const max = Math.max(effectiveTarget(row) - Number(row.qty_inventory_covered_total ?? 0), 0);
     if (!Number.isFinite(v) || v < 0 || v > max) {
       alert(`Введите целое от 0 до ${formatIntegerQty(String(max))}`);
       return;
@@ -469,6 +475,130 @@
     }
   }
 
+  function inventoryMonthDate(month: string): string {
+    return `${month.slice(0, 7)}-01`;
+  }
+
+  function filterInventoryParts(items: Part[], query: string, rows: InventoryDraftRow[]): Part[] {
+    const selectedIds = new Set(rows.map((row) => row.part_id));
+    const needle = query.trim().toLocaleLowerCase('ru-RU');
+    if (!needle) return [];
+    return items
+      .filter((part) => !selectedIds.has(part.id))
+      .filter((part) => {
+        const haystack = [part.id, part.name, part.cipher, part.article, part.part_type, part.supplier]
+          .filter((value) => value != null)
+          .join(' ')
+          .toLocaleLowerCase('ru-RU');
+        return haystack.includes(needle);
+      })
+      .sort((a, b) => PART_NAME_COLLATOR.compare(a.name, b.name) || a.id - b.id)
+      .slice(0, 20);
+  }
+
+  $: inventoryPartOptions = filterInventoryParts(parts, inventorySearch, inventoryRows);
+
+  async function openInventory() {
+    if (!selectedPlan) {
+      alert('Сначала создайте месячный план за выбранный месяц');
+      return;
+    }
+    inventoryModalOpen = true;
+    inventoryLoading = true;
+    inventoryError = '';
+    inventoryMonth = selectedMonth;
+    inventoryDocument = null;
+    inventoryRows = [];
+    inventoryNote = '';
+    inventorySearch = '';
+    try {
+      const document = await api.monthlyPlans.inventory.get(inventoryMonthDate(inventoryMonth));
+      inventoryDocument = document;
+      inventoryRows = (document?.items ?? []).map((item) => ({
+        part_id: item.part_id,
+        qty_found: formatIntegerQty(item.qty_found),
+        note: item.note ?? '',
+      }));
+      inventoryNote = document?.note ?? '';
+    } catch (e) {
+      inventoryError = (e as Error).message || 'Не удалось загрузить инвентаризацию';
+    } finally {
+      inventoryLoading = false;
+    }
+  }
+
+  function addInventoryPart(part: Part) {
+    if (inventoryRows.some((row) => row.part_id === part.id)) return;
+    inventoryRows = [...inventoryRows, { part_id: part.id, qty_found: '1', note: '' }];
+    inventorySearch = '';
+  }
+
+  function removeInventoryPart(partId: number) {
+    inventoryRows = inventoryRows.filter((row) => row.part_id !== partId);
+  }
+
+  async function refreshAfterInventoryChange() {
+    if (currentPlanId) await loadPlanDetail(currentPlanId);
+    if (remaindersModalOpen) {
+      try {
+        remaindersData = await api.monthlyPlans.remainders();
+      } catch (e) {
+        remaindersError = (e as Error).message || 'Не удалось обновить остатки';
+      }
+    }
+  }
+
+  async function saveInventory() {
+    if (!inventoryMonth || inventoryRows.length === 0) {
+      alert('Добавьте хотя бы одну найденную деталь');
+      return;
+    }
+    for (const row of inventoryRows) {
+      const qty = Number(row.qty_found);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        alert(`Для детали «${partName(row.part_id)}» укажите количество больше 0`);
+        return;
+      }
+    }
+    const action = inventoryDocument?.status === 'posted' ? 'заменить' : 'провести';
+    if (!confirm(`Действительно ${action} инвентаризацию за ${monthLabel(inventoryMonth)}? Остатки выбранного и последующих месяцев будут пересчитаны.`)) return;
+
+    inventorySaving = true;
+    inventoryError = '';
+    try {
+      inventoryDocument = await api.monthlyPlans.inventory.save(inventoryMonthDate(inventoryMonth), {
+        note: inventoryNote.trim() || null,
+        items: inventoryRows.map((row) => ({
+          part_id: row.part_id,
+          qty_found: row.qty_found.trim(),
+          note: row.note.trim() || null,
+        })),
+      });
+      await refreshAfterInventoryChange();
+      inventoryModalOpen = false;
+    } catch (e) {
+      inventoryError = (e as Error).message || 'Не удалось сохранить инвентаризацию';
+    } finally {
+      inventorySaving = false;
+    }
+  }
+
+  async function cancelInventory() {
+    if (!inventoryDocument || inventoryDocument.status !== 'posted') return;
+    if (!confirm(`Отменить инвентаризацию за ${monthLabel(inventoryMonth)}? Её количество будет исключено из всех остатков и планов.`)) return;
+    inventorySaving = true;
+    inventoryError = '';
+    try {
+      inventoryDocument = await api.monthlyPlans.inventory.cancel(inventoryMonthDate(inventoryMonth));
+      await refreshAfterInventoryChange();
+      inventoryModalOpen = false;
+    } catch (e) {
+      inventoryError = (e as Error).message || 'Не удалось отменить инвентаризацию';
+    } finally {
+      inventorySaving = false;
+    }
+  }
+
   function monthLabel(m: string): string {
     const parts2 = m.slice(0, 7).split('-');
     if (parts2.length < 2) return m;
@@ -490,6 +620,14 @@
 
   function toggleRemainderPart(partId: number) {
     expandedRemainderParts = { ...expandedRemainderParts, [partId]: !expandedRemainderParts[partId] };
+  }
+
+  function remainderSourceMonths(part: RemainderPart): string[] {
+    return [...new Set([
+      ...Object.keys(part.overorders ?? {}),
+      ...Object.keys(part.inventory_additions ?? {}),
+      ...Object.keys(part.inventory_consumed ?? {}),
+    ])].sort();
   }
 
   $: remainderGroups = (() => {
@@ -518,7 +656,7 @@
 
   function deliveryOk(p: MonthlyPlanPartWithCoverage) {
     if (p.delivery_complete != null) return p.delivery_complete;
-    return Number(p.qty_delivered ?? 0) >= effectiveTarget(p);
+    return Number(p.qty_delivered ?? 0) + Number(p.qty_inventory_covered_total ?? 0) >= effectiveTarget(p);
   }
 
   function coverageOk(p: MonthlyPlanPartWithCoverage) {
@@ -861,6 +999,15 @@
       <button on:click={openRemainders} class="px-4 py-2 bg-zinc-700 text-white font-medium rounded-lg hover:bg-zinc-600 transition-colors text-sm">
         Остатки деталей
       </button>
+      <button
+        type="button"
+        on:click={openInventory}
+        disabled={!selectedPlan}
+        title={selectedPlan ? 'Зафиксировать дополнительно найденные детали' : 'Сначала создайте план за выбранный месяц'}
+        class="px-4 py-2 bg-violet-700 text-white font-medium rounded-lg hover:bg-violet-600 disabled:cursor-not-allowed disabled:opacity-40 transition-colors text-sm"
+      >
+        Инвентаризация
+      </button>
     </div>
   </div>
 
@@ -1020,7 +1167,7 @@
                   <th class="px-4 py-3 font-medium text-left">Деталь</th>
                   <th class="px-4 py-3 font-medium text-left">Поставщик</th>
                   <th class="px-4 py-3 font-medium text-center">Итого к закупке</th>
-                  <th class="px-4 py-3 font-medium text-center">Покрытие счетами</th>
+                  <th class="px-4 py-3 font-medium text-center">Обеспечение плана</th>
                   <th class="px-4 py-3 font-medium text-center">Поставлено</th>
                 </tr>
               </thead>
@@ -1082,6 +1229,19 @@
                         Покрыто: <span class="font-mono">{formatIntegerQty(p.qty_covered_total)}</span>
                         из <span class="font-mono">{formatIntegerQty(p.qty_final)}</span>
                       </div>
+                      {#if Number(p.qty_inventory_covered_total ?? 0) > 0}
+                        <div class="mb-2 rounded-lg border border-violet-500/40 bg-violet-500/15 px-3 py-2 text-left text-[11px] text-violet-100">
+                          <div class="flex items-center justify-between gap-2">
+                            <span class="font-medium">Из инвентаризации</span>
+                            <span class="font-mono">{formatIntegerQty(p.qty_inventory_covered_total)}</span>
+                          </div>
+                          {#if (p.inventory_allocations ?? []).length > 0}
+                            <div class="mt-1 text-[10px] text-violet-300/80">
+                              {(p.inventory_allocations ?? []).map((item) => monthLabel(item.month)).join(', ')}
+                            </div>
+                          {/if}
+                        </div>
+                      {/if}
                       {#if p.has_invoice}
                         <ul class="mt-2 space-y-1.5 text-left text-[11px]">
                           {#each p.invoices ?? [] as inv}
@@ -1202,15 +1362,20 @@
                         ? 'bg-emerald-950/20 border-l-2 border-emerald-500/40'
                         : 'bg-red-950/20 border-l-2 border-red-500/40'}"
                     >
+                      {#if Number(p.qty_inventory_covered_total ?? 0) > 0}
+                        <div class="mx-auto mb-2 max-w-[280px] rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-xs text-violet-200">
+                          Физически в наличии по инвентаризации: <span class="font-mono">{formatIntegerQty(p.qty_inventory_covered_total)}</span>
+                        </div>
+                      {/if}
                       {#if !p.has_invoice}
                         <div class="mx-auto max-w-[270px] rounded-lg border border-zinc-700/70 bg-black/10 px-3 py-2 text-xs text-zinc-500">
-                          Поставка станет доступна после привязки счёта
+                          {Number(p.qty_inventory_covered_total ?? 0) > 0 ? 'Остальная поставка станет доступна после привязки счёта' : 'Поставка станет доступна после привязки счёта'}
                         </div>
                       {:else}
                         <div class="mx-auto grid max-w-[280px] grid-cols-[minmax(0,1fr)_auto] items-end gap-2 text-left">
                           <div class="min-w-0">
                             <label class="mb-1 block text-[10px] font-medium uppercase tracking-wide text-zinc-500" for="del-{p.id}">
-                              Поставлено
+                              Поставлено по счетам
                             </label>
                             <div class="flex min-w-0 items-center gap-1.5">
                             <input
@@ -1218,7 +1383,7 @@
                               type="number"
                               step="1"
                               min="0"
-                              max={effectiveTarget(p)}
+                              max={Math.max(effectiveTarget(p) - Number(p.qty_inventory_covered_total ?? 0), 0)}
                               value={deliverDraft[p.id] ?? ''}
                               on:input={(e) => {
                                 const el = e.currentTarget;
@@ -1228,7 +1393,7 @@
                               }}
                               class="min-w-0 w-full px-2 py-1.5 bg-zinc-900 border border-zinc-600 rounded text-white text-sm font-mono"
                             />
-                              <span class="shrink-0 whitespace-nowrap text-xs text-zinc-500">из {formatIntegerQty(p.qty_final)}</span>
+                              <span class="shrink-0 whitespace-nowrap text-xs text-zinc-500">из {formatIntegerQty(Math.max(effectiveTarget(p) - Number(p.qty_inventory_covered_total ?? 0), 0))}</span>
                             </div>
                           </div>
                           <button
@@ -1300,6 +1465,146 @@
   {/if}
 </div>
 
+<!-- Inventory modal -->
+{#if inventoryModalOpen}
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" on:click={() => !inventorySaving && (inventoryModalOpen = false)} role="button" tabindex="0">
+    <div class="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-zinc-700 bg-surface-800" on:click|stopPropagation role="dialog" aria-label="Инвентаризация">
+      <div class="flex items-start justify-between gap-4 border-b border-zinc-700 px-6 py-4">
+        <div>
+          <div class="flex flex-wrap items-center gap-2">
+            <h2 class="text-lg font-semibold text-white">Инвентаризация · {monthLabel(inventoryMonth)}</h2>
+            {#if inventoryDocument?.status === 'posted'}
+              <span class="rounded border border-emerald-500/30 bg-emerald-500/15 px-2 py-0.5 text-[11px] text-emerald-300">проведена</span>
+            {:else if inventoryDocument?.status === 'cancelled'}
+              <span class="rounded border border-red-500/30 bg-red-500/15 px-2 py-0.5 text-[11px] text-red-300">отменена</span>
+            {:else}
+              <span class="rounded border border-zinc-600 bg-zinc-700/50 px-2 py-0.5 text-[11px] text-zinc-300">новая</span>
+            {/if}
+          </div>
+          <p class="mt-1 max-w-3xl text-xs text-zinc-400">
+            Указывайте только дополнительно найденное количество, не общий остаток склада. После проведения оно закроет незакрытую счетами потребность этого месяца, а неиспользованная часть перейдёт дальше.
+          </p>
+          {#if inventoryDocument}
+            <p class="mt-1 text-[11px] text-zinc-500">Последнее изменение: {formatDateTime(inventoryDocument.updated_at)}</p>
+          {/if}
+        </div>
+        <button type="button" disabled={inventorySaving} on:click={() => inventoryModalOpen = false} class="px-2 text-xl leading-none text-zinc-400 hover:text-white disabled:opacity-40">×</button>
+      </div>
+
+      <div class="overflow-y-auto px-6 py-4">
+        {#if inventoryLoading}
+          <p class="text-sm text-zinc-400">Загрузка инвентаризации…</p>
+        {:else}
+          {#if inventoryError}
+            <div class="mb-4 rounded-lg border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-200">{inventoryError}</div>
+          {/if}
+
+          <div class="mb-4">
+            <label for="inventory-part-search" class="mb-1 block text-sm text-zinc-300">Добавить найденную деталь</label>
+            <input
+              id="inventory-part-search"
+              type="search"
+              bind:value={inventorySearch}
+              autocomplete="off"
+              placeholder="Название, ID, шифр, артикул, тип или поставщик"
+              class="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+            />
+            {#if inventorySearch.trim() && inventoryPartOptions.length > 0}
+              <div class="mt-1 max-h-48 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-950/95 p-1 shadow-xl">
+                {#each inventoryPartOptions as part (part.id)}
+                  <button
+                    type="button"
+                    on:click={() => addInventoryPart(part)}
+                    class="flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-zinc-200 hover:bg-zinc-800"
+                  >
+                    <span class="w-14 shrink-0 font-mono text-xs text-zinc-500">#{part.id}</span>
+                    <span class="min-w-0 flex-1 truncate">{part.name}</span>
+                    <span class="shrink-0 text-xs text-zinc-500">{part.part_type || NO_TYPE_LABEL}</span>
+                    {#if part.is_archived}<span class="shrink-0 text-[10px] text-amber-400">архив</span>{/if}
+                  </button>
+                {/each}
+              </div>
+            {:else if inventorySearch.trim()}
+              <p class="mt-1 text-xs text-zinc-500">Подходящих деталей нет или они уже добавлены.</p>
+            {/if}
+          </div>
+
+          {#if inventoryRows.length === 0}
+            <div class="rounded-xl border border-dashed border-zinc-700 px-4 py-8 text-center text-sm text-zinc-500">
+              Найденные детали ещё не добавлены.
+            </div>
+          {:else}
+            <div class="overflow-x-auto rounded-xl border border-zinc-700">
+              <table class="w-full min-w-[760px] text-sm">
+                <thead class="bg-zinc-900 text-zinc-400">
+                  <tr>
+                    <th class="px-3 py-2 text-left font-medium">ID</th>
+                    <th class="px-3 py-2 text-left font-medium">Деталь</th>
+                    <th class="w-44 px-3 py-2 text-left font-medium">Найдено дополнительно</th>
+                    <th class="px-3 py-2 text-left font-medium">Примечание</th>
+                    <th class="w-16 px-3 py-2"></th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-zinc-800">
+                  {#each inventoryRows as row (row.part_id)}
+                    <tr>
+                      <td class="px-3 py-2 font-mono text-zinc-500">{row.part_id}</td>
+                      <td class="px-3 py-2 text-zinc-100">{partName(row.part_id)}</td>
+                      <td class="px-3 py-2">
+                        <input
+                          type="number"
+                          min="0.000001"
+                          step="1"
+                          bind:value={row.qty_found}
+                          aria-label={`Найдено для ${partName(row.part_id)}`}
+                          class="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-white"
+                        />
+                      </td>
+                      <td class="px-3 py-2">
+                        <input
+                          bind:value={row.note}
+                          maxlength="2000"
+                          placeholder="Например, найдено на складе"
+                          aria-label={`Примечание для ${partName(row.part_id)}`}
+                          class="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+                        />
+                      </td>
+                      <td class="px-3 py-2 text-right">
+                        <button type="button" on:click={() => removeInventoryPart(row.part_id)} class="rounded px-2 py-1 text-red-300 hover:bg-red-950/60" title="Убрать строку">✕</button>
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+
+          <div class="mt-4">
+            <label for="inventory-note" class="mb-1 block text-sm text-zinc-300">Комментарий к инвентаризации</label>
+            <textarea id="inventory-note" bind:value={inventoryNote} maxlength="5000" rows="2" placeholder="Опционально" class="w-full resize-none rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"></textarea>
+          </div>
+        {/if}
+      </div>
+
+      {#if !inventoryLoading}
+        <div class="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-700 px-6 py-4">
+          <div>
+            {#if inventoryDocument?.status === 'posted'}
+              <button type="button" disabled={inventorySaving} on:click={cancelInventory} class="rounded-lg border border-red-800 bg-red-950/50 px-4 py-2 text-sm font-medium text-red-200 hover:bg-red-900/60 disabled:opacity-40">Отменить инвентаризацию</button>
+            {/if}
+          </div>
+          <div class="flex gap-2">
+            <button type="button" disabled={inventorySaving} on:click={() => inventoryModalOpen = false} class="rounded-lg bg-zinc-700 px-4 py-2 text-sm text-white hover:bg-zinc-600 disabled:opacity-40">Закрыть</button>
+            <button type="button" disabled={inventorySaving || inventoryRows.length === 0} on:click={saveInventory} class="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-40">
+              {inventorySaving ? 'Пересчёт…' : inventoryDocument?.status === 'posted' ? 'Сохранить и пересчитать' : 'Провести инвентаризацию'}
+            </button>
+          </div>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}
+
 <!-- Remainders modal -->
 {#if remaindersModalOpen}
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" on:click={() => remaindersModalOpen = false} role="button" tabindex="0">
@@ -1307,7 +1612,7 @@
       <div class="flex items-center justify-between border-b border-zinc-700 px-6 py-4">
         <div>
           <h2 class="text-lg font-semibold text-white">Остатки деталей</h2>
-          <p class="text-xs text-zinc-400 mt-0.5">Излишек заказа по счетам на последний рассчитанный план. Клик по детали — разбивка перезаказа по месяцам.</p>
+          <p class="text-xs text-zinc-400 mt-0.5">Единый остаток из излишков счетов и проведённых инвентаризаций. Клик по детали — происхождение и использование количества.</p>
         </div>
         <button type="button" on:click={() => remaindersModalOpen = false} class="text-zinc-400 hover:text-white text-xl leading-none px-2">×</button>
       </div>
@@ -1318,11 +1623,11 @@
         {:else if remaindersError}
           <p class="text-red-300 text-sm">{remaindersError}</p>
         {:else if !remaindersData || !remaindersData.current_month}
-          <p class="text-zinc-400 text-sm">Нет данных: создайте месячные планы и привяжите счета.</p>
+          <p class="text-zinc-400 text-sm">Нет данных: создайте месячный план и добавьте счета или инвентаризацию.</p>
         {:else}
           <h3 class="text-sm font-semibold text-white mb-2">Остатки на конец {monthLabel(remaindersData.current_month)}</h3>
           {#if remainderGroups.length === 0}
-            <p class="text-zinc-400 text-sm">Остатков нет — излишков заказа по счетам не осталось.</p>
+            <p class="text-zinc-400 text-sm">Остатков нет — все доступные количества использованы планами.</p>
           {:else}
             <div class="space-y-3">
               {#each remainderGroups as g (g.type)}
@@ -1339,7 +1644,7 @@
                   {#if isRemainderGroupExpanded(g.type)}
                     <ul class="divide-y divide-zinc-800">
                       {#each g.parts as p (p.part_id)}
-                        {@const months = Object.keys(p.overorders)}
+                        {@const months = remainderSourceMonths(p)}
                         <li>
                           <button
                             type="button"
@@ -1347,20 +1652,27 @@
                             class="flex w-full items-center gap-3 px-4 py-2 text-left text-sm hover:bg-zinc-800/40"
                           >
                             <span class="text-zinc-500 text-[10px] w-2">{months.length ? (expandedRemainderParts[p.part_id] ? '▾' : '▸') : ''}</span>
-                            <span class="flex-1 text-zinc-100">{p.name}</span>
-                            <span class="font-mono text-emerald-300">{formatIntegerQty(p.remainder)}</span>
+                            <span class="min-w-0 flex-1 text-zinc-100">{p.name}</span>
+                            <span class="hidden text-[11px] text-zinc-500 sm:inline">счета {formatIntegerQty(p.invoice_remainder)} · инвентаризация {formatIntegerQty(p.inventory_remainder)}</span>
+                            <span class="w-20 text-right font-mono text-emerald-300">{formatIntegerQty(p.remainder)}</span>
                           </button>
                           {#if expandedRemainderParts[p.part_id]}
                             <div class="px-4 pb-3 pl-9">
-                              <div class="text-[11px] text-zinc-500 mb-1">Перезаказано по месяцам:</div>
+                              <div class="mb-2 flex flex-wrap gap-3 text-[11px] text-zinc-400">
+                                <span>Сейчас из счетов: <b class="font-mono text-zinc-200">{formatIntegerQty(p.invoice_remainder)}</b></span>
+                                <span>Сейчас из инвентаризации: <b class="font-mono text-violet-300">{formatIntegerQty(p.inventory_remainder)}</b></span>
+                              </div>
+                              <div class="text-[11px] text-zinc-500 mb-1">Движение источников по месяцам:</div>
                               {#if months.length === 0}
                                 <div class="text-[11px] text-zinc-500">нет данных</div>
                               {:else}
                                 <ul class="space-y-0.5">
                                   {#each months as m}
-                                    <li class="flex justify-between text-[11px] text-zinc-300 max-w-xs">
+                                    <li class="grid max-w-xl grid-cols-[minmax(110px,1fr)_auto_auto_auto] gap-3 text-[11px] text-zinc-300">
                                       <span>{monthLabel(m)}</span>
-                                      <span class="font-mono text-emerald-300">+{formatIntegerQty(p.overorders[m])}</span>
+                                      <span class="font-mono text-emerald-300">счета +{formatIntegerQty(p.overorders[m] ?? '0')}</span>
+                                      <span class="font-mono text-violet-300">найдено +{formatIntegerQty(p.inventory_additions[m] ?? '0')}</span>
+                                      <span class="font-mono text-zinc-500">использовано −{formatIntegerQty(p.inventory_consumed[m] ?? '0')}</span>
                                     </li>
                                   {/each}
                                 </ul>
@@ -1381,9 +1693,9 @@
               Недозаказ за текущий месяц
               <span class="text-zinc-400 font-normal">— {monthLabel(remaindersData.current_month)}</span>
             </h3>
-            <p class="text-xs text-zinc-500 mb-2">Потребность минус заказ по счетам за месяц, без учёта переносов остатков.</p>
+            <p class="text-xs text-zinc-500 mb-2">Реальная незакрытая потребность после учёта переносов, инвентаризации и счетов.</p>
             {#if undersupplyGroups.length === 0}
-              <p class="text-emerald-300 text-sm">Недозаказа нет — все детали обеспечены счетами этого месяца.</p>
+              <p class="text-emerald-300 text-sm">Недозаказа нет — вся потребность обеспечена остатками, инвентаризацией или счетами.</p>
             {:else}
               <div class="space-y-3">
                 {#each undersupplyGroups as g (g.type)}

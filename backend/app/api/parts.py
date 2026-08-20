@@ -6,6 +6,7 @@ from app.database import get_db
 from app.models import Part
 from app.models.bom import DeviceBomItem
 from app.models.invoice import InvoicePartLink
+from app.models.inventory import InventoryItem
 from app.models.monthly_plan import MonthlyPlanPart
 from app.models.order_part_item import OrderPartItem
 from app.schemas.common import PartArchiveUpdate, PartCreate, PartRead, PartUpdate
@@ -69,6 +70,12 @@ async def _check_part_references(session: AsyncSession, part_id: int) -> list[st
     )
     if invoice_count:
         refs.append(f"счета ({invoice_count} шт.)")
+
+    inventory_count = await session.scalar(
+        select(func.count()).where(InventoryItem.part_id == part_id)
+    )
+    if inventory_count:
+        refs.append(f"инвентаризации ({inventory_count} шт.)")
 
     order_count = await session.scalar(
         select(func.count()).where(OrderPartItem.part_id == part_id)

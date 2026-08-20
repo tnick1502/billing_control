@@ -15,6 +15,8 @@ from app.auth import employee_may_write
         ("DELETE", "/monthly-plans/12/parts/34/files/56"),
         ("POST", "/monthly-plans/12/invoice-links/batch"),
         ("DELETE", "/monthly-plans/12/invoice-links/78"),
+        ("POST", "/monthly-plans/inventory/2026-08-01"),
+        ("DELETE", "/monthly-plans/inventory/2026-08-01"),
     ],
 )
 def test_employee_has_full_write_access_inside_monthly_plans(method: str, path: str):
