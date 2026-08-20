@@ -9,6 +9,7 @@
 
   let parts: Part[] = [];
   let partTypes: string[] = [];
+  let suppliers: string[] = [];
   let loading = true;
   let loadError = '';
   let modalOpen = false;
@@ -19,20 +20,22 @@
   let showArchived = false;
   let typeQuery = '';
   let typeDropdownOpen = false;
+  let supplierQuery = '';
+  let supplierDropdownOpen = false;
   let expanded: Record<string, boolean> = loadExpanded();
 
   $: filteredParts = filterParts(parts, searchQuery, showArchived);
   $: groupedParts = groupParts(filteredParts);
   $: groupKeys = Object.keys(groupedParts).sort(compareGroupKeys);
   $: filteredTypeOptions = filterTypeOptions(partTypes, typeQuery);
+  $: filteredSupplierOptions = filterSupplierOptions(suppliers, supplierQuery);
 
   onMount(() => {
     void loadPage();
   });
 
   async function loadPage() {
-    await load();
-    await loadTypes();
+    await Promise.all([load(), loadTypes(), loadSuppliers()]);
   }
 
   function loadExpanded(): Record<string, boolean> {
@@ -76,12 +79,22 @@
     }
   }
 
+  async function loadSuppliers() {
+    try {
+      suppliers = await api.parts.listSuppliers();
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
   function openCreate() {
     editingId = null;
     editingIsArchived = false;
     form = { name: '', cipher: null, article: null, part_type: null, supplier: null, description: null };
     typeQuery = '';
     typeDropdownOpen = false;
+    supplierQuery = '';
+    supplierDropdownOpen = false;
     modalOpen = true;
   }
 
@@ -98,6 +111,8 @@
     };
     typeQuery = p.part_type ?? '';
     typeDropdownOpen = false;
+    supplierQuery = p.supplier ?? '';
+    supplierDropdownOpen = false;
     modalOpen = true;
   }
 
@@ -169,6 +184,24 @@
     typeDropdownOpen = true;
   }
 
+  function filterSupplierOptions(items: string[], query: string): string[] {
+    const needle = query.trim().toLocaleLowerCase('ru-RU');
+    if (!needle) return items;
+    return items.filter((supplier) => supplier.toLocaleLowerCase('ru-RU').includes(needle));
+  }
+
+  function selectSupplier(supplier: string) {
+    form.supplier = supplier;
+    supplierQuery = supplier;
+    supplierDropdownOpen = false;
+  }
+
+  function onSupplierInput(value: string) {
+    supplierQuery = value;
+    form.supplier = value.trim() || null;
+    supplierDropdownOpen = true;
+  }
+
   function handleRowKeydown(event: KeyboardEvent, part: Part) {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
@@ -191,8 +224,7 @@
         await api.parts.create(form);
       }
       modalOpen = false;
-      await load();
-      await loadTypes();
+      await loadPage();
     } catch (e) {
       alert((e as Error).message);
     }
@@ -203,8 +235,7 @@
       await api.parts.archive(id, !currentlyArchived);
       modalOpen = false;
       editingId = null;
-      await load();
-      await loadTypes();
+      await loadPage();
     } catch (e) {
       alert((e as Error).message);
     }
@@ -216,8 +247,7 @@
       await api.parts.delete(id);
       modalOpen = false;
       editingId = null;
-      await load();
-      await loadTypes();
+      await loadPage();
     } catch (e) {
       alert((e as Error).message);
     }
@@ -374,14 +404,32 @@
           <label class="block text-sm text-zinc-400 mb-1">Артикул</label>
           <input bind:value={form.article} placeholder="Опционально" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
         </div>
-        <div>
-          <label class="block text-sm text-zinc-400 mb-1">Поставщик</label>
+        <div class="relative">
+          <label class="block text-sm text-zinc-400 mb-1" for="part-supplier-input">Поставщик</label>
           <input
-            bind:value={form.supplier}
+            id="part-supplier-input"
+            type="search"
+            value={supplierQuery}
+            on:input={(e) => onSupplierInput(e.currentTarget.value)}
+            on:focus={() => (supplierDropdownOpen = true)}
             maxlength="255"
-            placeholder="Опционально, до 255 символов"
+            autocomplete="off"
+            placeholder="Выберите существующего или введите нового"
             class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
           />
+          {#if supplierDropdownOpen && filteredSupplierOptions.length > 0}
+            <div class="absolute left-0 right-0 z-20 mt-1 max-h-40 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-950/95 shadow-xl">
+              {#each filteredSupplierOptions as supplier}
+                <button
+                  type="button"
+                  on:click={() => selectSupplier(supplier)}
+                  class="w-full px-3 py-1.5 text-left text-sm text-zinc-200 hover:bg-zinc-800"
+                >
+                  {supplier}
+                </button>
+              {/each}
+            </div>
+          {/if}
         </div>
         <div>
           <label class="block text-sm text-zinc-400 mb-1" for="part-type-input">Тип детали</label>

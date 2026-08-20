@@ -54,10 +54,15 @@ log = logging.getLogger(__name__)
 def employee_may_write(method: str, path: str) -> bool:
     """Права сотрудника на изменение данных.
 
-    Сотрудник может создавать/редактировать счета и вложения (префикс ``/invoices``),
-    но НЕ удалять их — удаление финансовых документов и привязок доступно только админу.
+    Сотрудник полностью работает с месячным планом, включая его строки и файлы.
+    Также он может создавать/редактировать счета и вложения (префикс ``/invoices``),
+    но НЕ удалять их напрямую — удаление финансовых документов доступно только админу.
+    Отвязка счёта из месячного плана имеет отдельный путь ``/monthly-plans/...``.
     """
     if path in EMPLOYEE_WRITE_PATHS:
+        return True
+    is_monthly_plan = path == "/monthly-plans" or path.startswith("/monthly-plans/")
+    if is_monthly_plan:
         return True
     is_invoices = path == "/invoices" or path.startswith("/invoices/")
     if not is_invoices:

@@ -26,10 +26,12 @@ from app.schemas.common import (
     MonthlyPlanUpdate,
     MonthlyPlanGenerate,
     MonthlyPlanDeviceRead,
+    MonthlyPlanInvoiceLinkBatchCreate,
     MonthlyPlanPartRead,
     MonthlyPlanPartUpdate,
+    InvoicePartLinkRead,
 )
-from app.services.carryover import compute_carryover, recompute_carryover_links
+from app.services.carryover import acquire_carryover_lock, compute_carryover, recompute_carryover_links
 from app.services.file_storage import delete_orphaned_files, save_upload_as_file
 from app.services.monthly_plan import generate_monthly_plan as do_generate
 from app.services.monthly_plan_excel import (
@@ -280,6 +282,95 @@ async def list_plan_parts(plan_id: int, session: AsyncSession = Depends(get_db))
     return result.scalars().all()
 
 
+@router.post("/{plan_id}/invoice-links/batch", response_model=list[InvoicePartLinkRead])
+async def create_plan_invoice_links_batch(
+    plan_id: int,
+    data: MonthlyPlanInvoiceLinkBatchCreate,
+    session: AsyncSession = Depends(get_db),
+):
+    """Атомарно привязать один счёт к нескольким выбранным строкам плана."""
+    # Сериализуемся с пересчётом переносов и другими массовыми привязками. Блокировка
+    # транзакционная и на SQLite является no-op.
+    await acquire_carryover_lock(session)
+
+    if not await session.get(MonthlyPlan, plan_id):
+        raise HTTPException(404, "Monthly plan not found")
+    if not await session.get(Invoice, data.invoice_id):
+        raise HTTPException(404, "Счёт не найден")
+
+    requested_ids = [item.plan_part_id for item in data.items]
+    rows_result = await session.execute(
+        select(MonthlyPlanPart).where(
+            MonthlyPlanPart.plan_id == plan_id,
+            MonthlyPlanPart.id.in_(requested_ids),
+        )
+    )
+    rows = list(rows_result.scalars().all())
+    rows_by_id = {row.id: row for row in rows}
+    missing_ids = [row_id for row_id in requested_ids if row_id not in rows_by_id]
+    if missing_ids:
+        raise HTTPException(
+            400,
+            f"Строки не принадлежат выбранному месячному плану: {', '.join(map(str, missing_ids))}",
+        )
+
+    part_ids = [rows_by_id[row_id].part_id for row_id in requested_ids]
+    existing_result = await session.execute(
+        select(InvoicePartLink.part_id).where(
+            InvoicePartLink.invoice_id == data.invoice_id,
+            InvoicePartLink.plan_id == plan_id,
+            InvoicePartLink.part_id.in_(part_ids),
+        )
+    )
+    existing_part_ids = set(existing_result.scalars().all())
+    if existing_part_ids:
+        raise HTTPException(
+            409,
+            "Счёт уже привязан к выбранным деталям с ID: "
+            + ", ".join(map(str, sorted(existing_part_ids))),
+        )
+
+    links = [
+        InvoicePartLink(
+            invoice_id=data.invoice_id,
+            plan_id=plan_id,
+            part_id=rows_by_id[item.plan_part_id].part_id,
+            qty_covered=item.qty_covered,
+            note=item.note,
+            is_carryover=False,
+        )
+        for item in data.items
+    ]
+    session.add_all(links)
+    await session.flush()
+    await recompute_carryover_links(session)
+    return links
+
+
+@router.delete("/{plan_id}/invoice-links/{link_id}", status_code=204)
+async def delete_plan_invoice_link(
+    plan_id: int,
+    link_id: int,
+    session: AsyncSession = Depends(get_db),
+):
+    """Отвязать ручную привязку из месячного плана, не открывая удаление счетов сотруднику."""
+    await acquire_carryover_lock(session)
+    link = await session.scalar(
+        select(InvoicePartLink).where(
+            InvoicePartLink.id == link_id,
+            InvoicePartLink.plan_id == plan_id,
+        )
+    )
+    if not link:
+        raise HTTPException(404, "Привязка счёта не найдена")
+    if link.is_carryover:
+        raise HTTPException(400, "Привязка-перенос пересобирается автоматически и не отвязывается вручную")
+    await session.delete(link)
+    await session.flush()
+    await recompute_carryover_links(session)
+    return None
+
+
 @router.patch("/{plan_id}/parts/{plan_part_id}", response_model=MonthlyPlanPartRead)
 async def update_plan_part(
     plan_id: int,
@@ -287,7 +378,7 @@ async def update_plan_part(
     data: MonthlyPlanPartUpdate,
     session: AsyncSession = Depends(get_db),
 ):
-    """Ручная корректировка строки плана (только админ — путь вне /invoices).
+    """Ручная корректировка строки плана (админ или сотрудник с доступом к плану).
 
     - ``qty_final`` — итоговая потребность к закупке (по умолчанию = расчётной qty_required).
       Изменение влияет на покрытие, переносы остатков и допустимый максимум «поставлено».

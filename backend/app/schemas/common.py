@@ -362,6 +362,28 @@ class MonthlyPlanPartUpdate(BaseModel):
         return self
 
 
+class MonthlyPlanInvoiceLinkBatchItem(BaseModel):
+    """Одна строка атомарной привязки счёта к деталям месячного плана."""
+
+    plan_part_id: int = Field(gt=0)
+    qty_covered: Decimal = Field(gt=0)
+    note: str | None = None
+
+
+class MonthlyPlanInvoiceLinkBatchCreate(BaseModel):
+    """Один счёт и выбранные пользователем строки месячного плана."""
+
+    invoice_id: int = Field(gt=0)
+    items: list[MonthlyPlanInvoiceLinkBatchItem] = Field(min_length=1, max_length=5000)
+
+    @model_validator(mode="after")
+    def unique_plan_parts(self) -> "MonthlyPlanInvoiceLinkBatchCreate":
+        ids = [item.plan_part_id for item in self.items]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Каждую деталь можно указать только один раз")
+        return self
+
+
 class InvoiceBase(BaseModel):
     invoice_no: str
     invoice_date: date

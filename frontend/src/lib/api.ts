@@ -205,6 +205,7 @@ export const api = {
   parts: {
     list: (includeArchived = false) => fetchApi<Part[]>(`/parts${includeArchived ? '?include_archived=true' : ''}`),
     listTypes: () => fetchApi<string[]>('/parts/types'),
+    listSuppliers: () => fetchApi<string[]>('/parts/suppliers'),
     get: (id: number) => fetchApi<Part>(`/parts/${id}`),
     create: (data: PartCreate) => fetchApi<Part>('/parts', { method: 'POST', body: JSON.stringify(data) }),
     update: (id: number, data: Partial<PartCreate>) => fetchApi<Part>(`/parts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
@@ -262,6 +263,15 @@ export const api = {
     },
     partWithCoverage: (planId: number, planPartId: number) =>
       fetchApi<MonthlyPlanPartWithCoverage>(`/monthly-plans/${planId}/parts/${planPartId}/with-coverage`),
+    linkInvoiceBatch: (
+      planId: number,
+      data: { invoice_id: number; items: MonthlyPlanInvoiceLinkBatchItem[] },
+    ) => fetchApi<InvoicePartLink[]>(`/monthly-plans/${planId}/invoice-links/batch`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+    unlinkInvoice: (planId: number, linkId: number) =>
+      fetchApi<void>(`/monthly-plans/${planId}/invoice-links/${linkId}`, { method: 'DELETE' }),
     exportExcel: async (planId: number): Promise<{ blob: Blob; filename: string }> => {
       const token = getAuthToken();
       const res = await fetch(`${API_BASE}/monthly-plans/${planId}/export.xlsx`, {
@@ -737,5 +747,11 @@ export interface InvoicePartLinkCreate {
   plan_id: number;
   part_id: number;
   qty_covered?: string | null;
+  note?: string | null;
+}
+
+export interface MonthlyPlanInvoiceLinkBatchItem {
+  plan_part_id: number;
+  qty_covered: string;
   note?: string | null;
 }

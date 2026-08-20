@@ -102,6 +102,30 @@ async def list_part_types(session: AsyncSession = Depends(get_db)):
     return [row for row in result.scalars().all() if row]
 
 
+@router.get("/suppliers", response_model=list[str])
+async def list_part_suppliers(session: AsyncSession = Depends(get_db)):
+    """Уникальные поставщики всех существующих деталей для подсказок в форме.
+
+    Дедупликация выполняется без учёта регистра, чтобы старые варианты вроде
+    ``ООО Ромашка`` и ``ооо ромашка`` не создавали две одинаковые подсказки.
+    """
+    result = await session.execute(
+        select(Part.supplier)
+        .where(Part.supplier.is_not(None))
+        .order_by(func.lower(Part.supplier), Part.supplier)
+    )
+    suppliers: list[str] = []
+    seen: set[str] = set()
+    for raw in result.scalars().all():
+        supplier = (raw or "").strip()
+        key = supplier.casefold()
+        if not supplier or key in seen:
+            continue
+        seen.add(key)
+        suppliers.append(supplier)
+    return suppliers
+
+
 @router.post("", response_model=PartRead)
 async def create_part(data: PartCreate, session: AsyncSession = Depends(get_db)):
     dump = _normalize_part_payload(data.model_dump())

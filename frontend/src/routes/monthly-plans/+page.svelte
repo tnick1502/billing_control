@@ -20,6 +20,7 @@
   let parts: { id: number; name: string; part_type: string | null; supplier: string | null }[] = [];
   let invoices: Invoice[] = [];
   let expandedPartGroups: Record<string, boolean> = loadExpandedPartGroups();
+  let selectedPlanPartIds: number[] = [];
 
   $: selectedPlan = plans.find((p) => planMonthKey(p) === selectedMonth) ?? null;
 
@@ -155,6 +156,7 @@
 
   async function loadPlanDetail(planId: number) {
     selectedPlanLoading = true;
+    selectedPlanPartIds = [];
     try {
       const [devsList, partsList] = await Promise.all([
         api.monthlyPlans.devices(planId),
@@ -224,6 +226,7 @@
     selectedMonth = month;
     selectedPlanDetail = null;
     deliverDraft = {};
+    selectedPlanPartIds = [];
     const plan = plans.find((p) => planMonthKey(p) === month);
     if (plan) {
       await loadPlanDetail(plan.id);
@@ -335,11 +338,11 @@
     }
   }
 
-  async function unlinkLink(invoiceId: number, linkId: number, planPartId: number) {
+  async function unlinkLink(linkId: number, planPartId: number) {
     if (!confirm('Отвязать счёт от этой детали в плане?')) return;
     const planId = currentPlanId;
     try {
-      await api.invoices.parts.delete(invoiceId, linkId);
+      await api.monthlyPlans.unlinkInvoice(planId, linkId);
       await refreshPlanPartRows(planId, [planPartId]);
     } catch (e) {
       alert((e as Error).message);
@@ -391,6 +394,44 @@
   $: currentPlanId = selectedPlan ? Number(selectedPlan.id) : 0;
   $: planPartGroups = selectedPlanDetail ? groupPlanParts(selectedPlanDetail.parts ?? []) : {} as Record<string, MonthlyPlanPartWithCoverage[]>;
   $: planPartGroupKeys = Object.keys(planPartGroups).sort(comparePartGroupKeys);
+  $: selectedPlanPartIdSet = new Set(selectedPlanPartIds);
+  $: selectedPlanRows = (selectedPlanDetail?.parts ?? []).filter((row) => selectedPlanPartIdSet.has(row.id));
+
+  function togglePlanPartSelection(planPartId: number, checked: boolean) {
+    const next = new Set(selectedPlanPartIds);
+    if (checked) next.add(planPartId);
+    else next.delete(planPartId);
+    selectedPlanPartIds = [...next];
+  }
+
+  function togglePlanPartGroup(rows: MonthlyPlanPartWithCoverage[]) {
+    const next = new Set(selectedPlanPartIds);
+    const allSelected = rows.length > 0 && rows.every((row) => next.has(row.id));
+    for (const row of rows) {
+      if (allSelected) next.delete(row.id);
+      else next.add(row.id);
+    }
+    selectedPlanPartIds = [...next];
+  }
+
+  function toggleAllPlanParts(checked: boolean) {
+    selectedPlanPartIds = checked ? (selectedPlanDetail?.parts ?? []).map((row) => row.id) : [];
+  }
+
+  function remainingToOrder(row: MonthlyPlanPartWithCoverage): number {
+    return Math.max(effectiveTarget(row) - Number(row.qty_covered_total ?? 0), 0);
+  }
+
+  function selectNeededPlanParts() {
+    selectedPlanPartIds = (selectedPlanDetail?.parts ?? [])
+      .filter((row) => remainingToOrder(row) > 0)
+      .map((row) => row.id);
+  }
+
+  function openLinkSelected() {
+    if (!currentPlanId || selectedPlanRows.length === 0) return;
+    openLinkModal(currentPlanId, selectedPlanRows.map((row) => row.part_id));
+  }
 
   function partGroupStateKey(planId: number, key: string): string {
     return `${planId}:${key}`;
@@ -542,6 +583,23 @@
     return next;
   }
 
+  function batchItemsForParts(
+    planId: number,
+    partIds: number[],
+    qtyByPart: Record<number, string>,
+  ): { plan_part_id: number; qty_covered: string }[] {
+    return partIds.map((partId) => {
+      const row = planPart(planId, partId);
+      if (!row) throw new Error(`Деталь ${partName(partId)} не найдена в выбранном плане`);
+      const raw = (qtyByPart[partId] ?? '').trim();
+      const qty = Number(raw);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        throw new Error(`Для детали «${partName(partId)}» укажите количество больше 0`);
+      }
+      return { plan_part_id: row.id, qty_covered: raw };
+    });
+  }
+
   function emptyInvoiceForm(): InvoiceCreate {
     return {
       invoice_no: '',
@@ -624,14 +682,16 @@
     const planId = linkPlanId;
     const planPartIds = planPartIdsForParts(planId, linkPartIds);
     try {
-      for (const pid of linkPartIds) {
-        await api.invoices.parts.create(linkInvoiceId, {
-          plan_id: planId,
-          part_id: pid,
-          qty_covered: linkQtyByPart[pid] || null,
-        });
+      const duplicateNames = linkPartIds
+        .filter((partId) => planPart(planId, partId)?.invoices?.some((invoice) => invoice.invoice_id === linkInvoiceId))
+        .map(partName);
+      if (duplicateNames.length > 0) {
+        throw new Error(`Этот счёт уже привязан к деталям: ${duplicateNames.join(', ')}`);
       }
+      const items = batchItemsForParts(planId, linkPartIds, linkQtyByPart);
+      await api.monthlyPlans.linkInvoiceBatch(planId, { invoice_id: linkInvoiceId, items });
       linkModalOpen = false;
+      selectedPlanPartIds = [];
       await refreshPlanPartRows(planId, planPartIds);
     } catch (e) {
       alert((e as Error).message);
@@ -655,16 +715,12 @@
     const planId = createInvoicePlanId;
     const planPartIds = planPartIdsForParts(planId, createInvoicePartIds);
     try {
+      const items = batchItemsForParts(planId, createInvoicePartIds, createInvoiceQtyByPart);
       const inv = await api.invoices.create(invoicePayload(createInvoiceForm), createInvoiceFileInput.files[0]);
       invoices = [inv, ...invoices.filter((item) => item.id !== inv.id)];
-      for (const pid of createInvoicePartIds) {
-        await api.invoices.parts.create(inv.id, {
-          plan_id: planId,
-          part_id: pid,
-          qty_covered: createInvoiceQtyByPart[pid] || null,
-        });
-      }
+      await api.monthlyPlans.linkInvoiceBatch(planId, { invoice_id: inv.id, items });
       createInvoiceModalOpen = false;
+      selectedPlanPartIds = [];
       await refreshPlanPartRows(planId, planPartIds);
     } catch (e) {
       alert((e as Error).message);
@@ -855,8 +911,47 @@
     </table>
 
     <!-- Parts grouped by type -->
-    <div class="flex items-center justify-between mb-2">
-      <h3 class="text-sm font-medium text-zinc-400">Детали</h3>
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <div class="flex flex-wrap items-center gap-3">
+        <h3 class="text-sm font-medium text-zinc-400">Детали</h3>
+        {#if (selectedPlanDetail.parts ?? []).length > 0}
+          <label class="flex cursor-pointer select-none items-center gap-2 text-xs text-zinc-300">
+            <input
+              type="checkbox"
+              checked={selectedPlanPartIds.length === selectedPlanDetail.parts.length}
+              on:change={(e) => toggleAllPlanParts(e.currentTarget.checked)}
+              class="h-4 w-4 accent-amber-500"
+            />
+            Все
+          </label>
+          <button
+            type="button"
+            on:click={selectNeededPlanParts}
+            class="rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-700 hover:text-white"
+            title="Выбрать детали, потребность которых ещё не полностью покрыта счетами"
+          >
+            Выбрать незаказанные
+          </button>
+          {#if selectedPlanPartIds.length > 0}
+            <button
+              type="button"
+              on:click={() => (selectedPlanPartIds = [])}
+              class="text-xs text-zinc-400 underline hover:text-zinc-200"
+            >
+              Снять выбор
+            </button>
+          {/if}
+        {/if}
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          on:click={openLinkSelected}
+          disabled={selectedPlanRows.length === 0}
+          class="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-black hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          Привязать счёт{selectedPlanRows.length > 0 ? ` · ${selectedPlanRows.length}` : ''}
+        </button>
       {#if planPartGroupKeys.length > 0}
         <button
           type="button"
@@ -870,43 +965,57 @@
           {/if}
         </button>
       {/if}
+      </div>
     </div>
     <div class="space-y-3">
       {#each planPartGroupKeys as groupKey (groupKey)}
         {@const groupParts = planPartGroups[groupKey] ?? []}
 
         <div class="overflow-hidden rounded-xl border border-zinc-700">
-          <button
-            type="button"
-            on:click={() => togglePartGroup(currentPlanId, groupKey)}
-            class="flex w-full items-center gap-2 bg-zinc-800 px-4 py-2.5 text-left hover:bg-zinc-700/80 transition-colors"
-          >
-            <span class="text-zinc-400 text-xs w-3">{expandedPartGroups[`${currentPlanId}:${groupKey}`] !== false ? '▾' : '▸'}</span>
-            <span class="font-medium text-white text-sm flex-1">{groupKey}</span>
-            <span class="text-xs text-zinc-400">({groupParts.length})</span>
+          <div class="flex w-full items-center gap-2 bg-zinc-800 px-4 py-2.5">
+            <input
+              type="checkbox"
+              checked={groupParts.length > 0 && groupParts.every((row) => selectedPlanPartIdSet.has(row.id))}
+              on:change={() => togglePlanPartGroup(groupParts)}
+              class="h-4 w-4 shrink-0 accent-amber-500"
+              aria-label={`Выбрать группу ${groupKey}`}
+            />
+            <button
+              type="button"
+              on:click={() => togglePartGroup(currentPlanId, groupKey)}
+              class="flex min-w-0 flex-1 items-center gap-2 rounded text-left hover:text-white focus:outline-none focus:ring-2 focus:ring-white/20"
+            >
+              <span class="w-3 text-xs text-zinc-400">{expandedPartGroups[`${currentPlanId}:${groupKey}`] !== false ? '▾' : '▸'}</span>
+              <span class="min-w-0 flex-1 truncate text-sm font-medium text-white">{groupKey}</span>
+              <span class="text-xs text-zinc-400">({groupParts.length})</span>
+            </button>
             {#if groupParts.every(coverageOk)}
-              <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">покрыто</span>
+              <span class="shrink-0 whitespace-nowrap rounded border border-emerald-500/30 bg-emerald-500/20 px-1.5 py-0.5 text-[10px] text-emerald-300">заказано</span>
             {:else}
-              <span class="text-[10px] px-1.5 py-0.5 rounded bg-red-500/15 text-red-300 border border-red-500/30">не покрыто</span>
+              <span class="shrink-0 whitespace-nowrap rounded border border-red-500/30 bg-red-500/15 px-1.5 py-0.5 text-[10px] text-red-300">не заказано</span>
             {/if}
             {#if groupParts.every(deliveryOk)}
-              <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">доставлено</span>
+              <span class="shrink-0 whitespace-nowrap rounded border border-emerald-500/30 bg-emerald-500/20 px-1.5 py-0.5 text-[10px] text-emerald-300">доставлено</span>
+            {:else}
+              <span class="shrink-0 whitespace-nowrap rounded border border-red-500/30 bg-red-500/15 px-1.5 py-0.5 text-[10px] text-red-300">не доставлено</span>
             {/if}
-          </button>
+          </div>
 
           {#if expandedPartGroups[`${currentPlanId}:${groupKey}`] !== false}
             <div class="overflow-x-auto">
-            <table class="w-full min-w-[1180px] table-fixed">
+            <table class="w-full min-w-[1230px] table-fixed">
               <colgroup>
+                <col style="width: 4%" />
                 <col style="width: 5%" />
-                <col style="width: 16%" />
+                <col style="width: 15%" />
                 <col style="width: 12%" />
                 <col style="width: 17%" />
-                <col style="width: 29%" />
-                <col style="width: 21%" />
+                <col style="width: 28%" />
+                <col style="width: 19%" />
               </colgroup>
               <thead class="bg-zinc-900 text-zinc-400">
                 <tr>
+                  <th class="px-2 py-3 font-medium text-center" aria-label="Выбор"></th>
                   <th class="px-3 py-3 font-medium text-center">ID</th>
                   <th class="px-4 py-3 font-medium text-left">Деталь</th>
                   <th class="px-4 py-3 font-medium text-left">Поставщик</th>
@@ -918,6 +1027,15 @@
               <tbody class="divide-y divide-zinc-800">
                 {#each groupParts as p (p.id)}
                   <tr class="hover:bg-zinc-800/30">
+                    <td class="px-2 py-3 text-center align-top">
+                      <input
+                        type="checkbox"
+                        checked={selectedPlanPartIdSet.has(p.id)}
+                        on:change={(e) => togglePlanPartSelection(p.id, e.currentTarget.checked)}
+                        class="h-4 w-4 accent-amber-500"
+                        aria-label={`Выбрать деталь ${partName(p.part_id)}`}
+                      />
+                    </td>
                     <td class="px-3 py-3 font-mono text-sm text-center align-top">{partId(p.part_id) ?? '—'}</td>
                     <td class="px-4 py-3 align-top">
                       <div class="break-words font-medium text-zinc-100" title={partName(p.part_id)}>
@@ -1012,7 +1130,7 @@
                                       <button
                                         type="button"
                                         class="h-7 rounded border border-red-500/40 bg-red-500/10 px-2 text-[10px] font-medium text-red-200 hover:bg-red-500/20"
-                                        on:click={() => unlinkLink(inv.invoice_id, inv.link_id, p.id)}
+                                        on:click={() => unlinkLink(inv.link_id, p.id)}
                                       >
                                         Отвязать
                                       </button>
@@ -1066,7 +1184,7 @@
                         <button
                           type="button"
                           on:click={() => openLinkModal(currentPlanId, [p.part_id])}
-                          class="min-h-8 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-300 hover:bg-amber-500/20"
+                          class="min-h-8 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20"
                         >
                           {p.has_invoice ? 'Привязать ещё счёт' : 'Привязать счёт'}
                         </button>
@@ -1363,8 +1481,9 @@
 <!-- Link invoice modal -->
 {#if linkModalOpen && linkPlanId}
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" on:click={() => linkModalOpen = false} role="button" tabindex="0">
-    <div class="bg-surface-800 rounded-xl p-6 w-full max-w-lg border border-zinc-700" on:click|stopPropagation role="dialog">
-      <h2 class="text-lg font-semibold text-white mb-4">Привязать счёт к {linkPartIds.length} деталям</h2>
+    <div class="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-zinc-700 bg-surface-800 p-6" on:click|stopPropagation role="dialog">
+      <h2 class="text-lg font-semibold text-white mb-1">Привязать один счёт к выбранным деталям</h2>
+      <p class="mb-4 text-sm text-zinc-400">Выбрано деталей: {linkPartIds.length}. Остаток потребности подставлен автоматически, каждое количество можно изменить.</p>
       <form on:submit|preventDefault={saveLinks} class="space-y-4">
         <div>
           <label class="block text-sm text-zinc-400 mb-1">Счёт</label>
@@ -1400,24 +1519,28 @@
         </div>
         <div class="space-y-2">
           <label class="block text-sm text-zinc-400">Покрываемый объем</label>
-          {#each linkPartIds as pid}
-            <div class="flex items-center gap-2">
-              <span class="min-w-0 flex-1 text-sm text-zinc-300 truncate">{partName(pid)}</span>
-              <input
-                type="number"
-                step="1"
-                min="0"
-                value={linkQtyByPart[pid] ?? ''}
-                on:input={(e) => {
-                  const el = e.currentTarget;
-                  if (el instanceof HTMLInputElement) {
-                    linkQtyByPart = { ...linkQtyByPart, [pid]: el.value };
-                  }
-                }}
-                class="w-32 px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white"
-              />
-            </div>
-          {/each}
+          <div class="max-h-64 space-y-2 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-950/40 p-2">
+            {#each linkPartIds as pid}
+              <div class="flex items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-zinc-800/60">
+                <span class="min-w-0 flex-1 truncate text-sm text-zinc-300" title={partName(pid)}>{partName(pid)}</span>
+                <span class="shrink-0 text-xs text-zinc-500">нужно {formatIntegerQty(planPart(linkPlanId, pid)?.qty_final)}</span>
+                <input
+                  type="number"
+                  step="1"
+                  min="1"
+                  value={linkQtyByPart[pid] ?? ''}
+                  on:input={(e) => {
+                    const el = e.currentTarget;
+                    if (el instanceof HTMLInputElement) {
+                      linkQtyByPart = { ...linkQtyByPart, [pid]: el.value };
+                    }
+                  }}
+                  aria-label={`Количество для ${partName(pid)}`}
+                  class="w-32 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"
+                />
+              </div>
+            {/each}
+          </div>
         </div>
         <div class="flex gap-2 pt-2">
           <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Привязать</button>
