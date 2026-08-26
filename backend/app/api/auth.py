@@ -28,7 +28,7 @@ def _client_ip(request: Request) -> str | None:
 
 
 @router.post("/auth/login", response_model=AuthToken)
-async def login(data: UserLogin, request: Request, session: AsyncSession = Depends(get_db)):
+async def login(data: UserLogin, request: Request, session: AsyncSession = Depends(get_db, scope="function")):
     key = client_key(_client_ip(request), data.username)
     retry_after = login_guard.retry_after(key)
     if retry_after:
@@ -59,7 +59,7 @@ async def me(request: Request):
 
 
 @router.post("/auth/logout", status_code=204)
-async def logout(request: Request, session: AsyncSession = Depends(get_db)):
+async def logout(request: Request, session: AsyncSession = Depends(get_db, scope="function")):
     token = getattr(request.state, "session_token", "")
     await delete_session_by_token(session, token)
     return None
@@ -68,7 +68,7 @@ async def logout(request: Request, session: AsyncSession = Depends(get_db)):
 @router.get("/admin/users", response_model=list[UserRead])
 async def list_users(
     _: User = Depends(require_admin),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     result = await session.execute(select(User).order_by(User.id))
     return result.scalars().all()
@@ -78,7 +78,7 @@ async def list_users(
 async def create_user(
     data: UserCreate,
     _: User = Depends(require_admin),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     role = normalize_role(data.role)
     user = User(
@@ -99,7 +99,7 @@ async def update_user(
     user_id: int,
     data: UserUpdate,
     _: User = Depends(require_admin),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     user = await session.get(User, user_id)
     if not user:
@@ -129,7 +129,7 @@ async def update_user(
 async def delete_user(
     user_id: int,
     current_user: User = Depends(require_admin),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     if user_id == current_user.id:
         raise HTTPException(status_code=400, detail="Нельзя удалить самого себя")
@@ -150,7 +150,7 @@ async def delete_user(
 @router.get("/admin/audit-logs", response_model=list[AuditLogRead])
 async def list_audit_logs(
     _: User = Depends(require_admin),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
     limit: int = Query(200, ge=1, le=1000),
 ):
     result = await session.execute(select(AuditLog).order_by(AuditLog.id.desc()).limit(limit))

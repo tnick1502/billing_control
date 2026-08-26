@@ -53,7 +53,7 @@ router = APIRouter(prefix="/monthly-plans", tags=["monthly-plans"])
 
 
 @router.get("", response_model=list[MonthlyPlanRead])
-async def list_monthly_plans(session: AsyncSession = Depends(get_db)):
+async def list_monthly_plans(session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(
         select(MonthlyPlan).order_by(MonthlyPlan.month.desc(), MonthlyPlan.revision.desc())
     )
@@ -61,7 +61,7 @@ async def list_monthly_plans(session: AsyncSession = Depends(get_db)):
 
 
 @router.post("", response_model=MonthlyPlanRead)
-async def create_monthly_plan(data: MonthlyPlanCreate, session: AsyncSession = Depends(get_db)):
+async def create_monthly_plan(data: MonthlyPlanCreate, session: AsyncSession = Depends(get_db, scope="function")):
     plan = MonthlyPlan(**data.model_dump())
     session.add(plan)
     await session.flush()
@@ -70,7 +70,7 @@ async def create_monthly_plan(data: MonthlyPlanCreate, session: AsyncSession = D
 
 
 @router.post("/generate", response_model=MonthlyPlanRead)
-async def generate_plan(data: MonthlyPlanGenerate, session: AsyncSession = Depends(get_db)):
+async def generate_plan(data: MonthlyPlanGenerate, session: AsyncSession = Depends(get_db, scope="function")):
     try:
         plan = await do_generate(session, data.month, data.replace)
         await session.flush()
@@ -82,7 +82,7 @@ async def generate_plan(data: MonthlyPlanGenerate, session: AsyncSession = Depen
 
 
 @router.get("/remainders")
-async def get_remainders(session: AsyncSession = Depends(get_db)):
+async def get_remainders(session: AsyncSession = Depends(get_db, scope="function")):
     """Общие остатки деталей на последний рассчитанный план + недозаказ текущего месяца.
 
     - remainders: фактический расчётный остаток на конец последнего месяца с разбивкой
@@ -167,7 +167,7 @@ async def _inventory_document_payload(
 
 
 @router.get("/inventory/{month}", response_model=InventoryDocumentRead | None)
-async def get_inventory_document(month: date, session: AsyncSession = Depends(get_db)):
+async def get_inventory_document(month: date, session: AsyncSession = Depends(get_db, scope="function")):
     """Вернуть инвентаризацию календарного месяца, включая отменённую."""
     _validate_inventory_month(month)
     return await _inventory_document_payload(session, month)
@@ -178,7 +178,7 @@ async def save_inventory_document(
     month: date,
     data: InventoryDocumentUpsert,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Атомарно провести или полностью заменить инвентаризацию месяца.
 
@@ -259,7 +259,7 @@ async def save_inventory_document(
 async def cancel_inventory_document(
     month: date,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Отменить влияние документа, сохранив его строки для аудита и восстановления."""
     _validate_inventory_month(month)
@@ -283,7 +283,7 @@ async def cancel_inventory_document(
 
 
 @router.get("/{plan_id}", response_model=MonthlyPlanRead)
-async def get_monthly_plan(plan_id: int, session: AsyncSession = Depends(get_db)):
+async def get_monthly_plan(plan_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(MonthlyPlan).where(MonthlyPlan.id == plan_id))
     plan = result.scalar_one_or_none()
     if not plan:
@@ -292,7 +292,7 @@ async def get_monthly_plan(plan_id: int, session: AsyncSession = Depends(get_db)
 
 
 @router.get("/{plan_id}/export.xlsx")
-async def export_monthly_plan_excel(plan_id: int, session: AsyncSession = Depends(get_db)):
+async def export_monthly_plan_excel(plan_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     """Скачать месячный план в Excel с группировкой, шифрами и состоянием исполнения."""
     plan = await session.get(MonthlyPlan, plan_id)
     if not plan:
@@ -407,7 +407,7 @@ async def export_monthly_plan_excel(plan_id: int, session: AsyncSession = Depend
 
 
 @router.patch("/{plan_id}", response_model=MonthlyPlanRead)
-async def update_monthly_plan(plan_id: int, data: MonthlyPlanUpdate, session: AsyncSession = Depends(get_db)):
+async def update_monthly_plan(plan_id: int, data: MonthlyPlanUpdate, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(MonthlyPlan).where(MonthlyPlan.id == plan_id))
     plan = result.scalar_one_or_none()
     if not plan:
@@ -420,7 +420,7 @@ async def update_monthly_plan(plan_id: int, data: MonthlyPlanUpdate, session: As
 
 
 @router.delete("/{plan_id}", status_code=204)
-async def delete_monthly_plan(plan_id: int, session: AsyncSession = Depends(get_db)):
+async def delete_monthly_plan(plan_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     await acquire_carryover_lock(session)
     result = await session.execute(select(MonthlyPlan).where(MonthlyPlan.id == plan_id))
     plan = result.scalar_one_or_none()
@@ -462,7 +462,7 @@ async def delete_monthly_plan(plan_id: int, session: AsyncSession = Depends(get_
 
 
 @router.get("/{plan_id}/devices", response_model=list[MonthlyPlanDeviceRead])
-async def list_plan_devices(plan_id: int, session: AsyncSession = Depends(get_db)):
+async def list_plan_devices(plan_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     if not await session.get(MonthlyPlan, plan_id):
         raise HTTPException(404, "Monthly plan not found")
     result = await session.execute(select(MonthlyPlanDevice).where(MonthlyPlanDevice.plan_id == plan_id))
@@ -470,7 +470,7 @@ async def list_plan_devices(plan_id: int, session: AsyncSession = Depends(get_db
 
 
 @router.get("/{plan_id}/parts", response_model=list[MonthlyPlanPartRead])
-async def list_plan_parts(plan_id: int, session: AsyncSession = Depends(get_db)):
+async def list_plan_parts(plan_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     if not await session.get(MonthlyPlan, plan_id):
         raise HTTPException(404, "Monthly plan not found")
     result = await session.execute(select(MonthlyPlanPart).where(MonthlyPlanPart.plan_id == plan_id))
@@ -481,7 +481,7 @@ async def list_plan_parts(plan_id: int, session: AsyncSession = Depends(get_db))
 async def create_plan_invoice_links_batch(
     plan_id: int,
     data: MonthlyPlanInvoiceLinkBatchCreate,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Атомарно привязать один счёт к нескольким выбранным строкам плана."""
     # Сериализуемся с пересчётом переносов и другими массовыми привязками. Блокировка
@@ -546,7 +546,7 @@ async def create_plan_invoice_links_batch(
 async def delete_plan_invoice_link(
     plan_id: int,
     link_id: int,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Отвязать ручную привязку из месячного плана, не открывая удаление счетов сотруднику."""
     await acquire_carryover_lock(session)
@@ -571,7 +571,7 @@ async def update_plan_part(
     plan_id: int,
     plan_part_id: int,
     data: MonthlyPlanPartUpdate,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Ручная корректировка строки плана (админ или сотрудник с доступом к плану).
 
@@ -624,7 +624,7 @@ async def update_plan_part(
 
 
 @router.get("/{plan_id}/parts/{plan_part_id}/files", response_model=list[FileRead])
-async def list_plan_part_files(plan_id: int, plan_part_id: int, session: AsyncSession = Depends(get_db)):
+async def list_plan_part_files(plan_id: int, plan_part_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     row = await session.scalar(
         select(MonthlyPlanPart).where(
             MonthlyPlanPart.id == plan_part_id,
@@ -647,7 +647,7 @@ async def upload_plan_part_files(
     plan_id: int,
     plan_part_id: int,
     files: List[UploadFile] = File(...),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     row = await session.scalar(
         select(MonthlyPlanPart).where(
@@ -677,7 +677,7 @@ async def delete_plan_part_file(
     plan_id: int,
     plan_part_id: int,
     file_id: int,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     link = await session.scalar(
         select(MonthlyPlanPartFile).where(
@@ -839,7 +839,7 @@ async def _plan_parts_with_coverage(
 async def list_plan_parts_with_coverage(
     plan_id: int,
     plan_part_ids: List[int] | None = Query(default=None),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Returns all plan rows, or only requested rows, with coverage and files."""
     return await _plan_parts_with_coverage(
@@ -853,7 +853,7 @@ async def list_plan_parts_with_coverage(
 async def get_plan_part_with_coverage(
     plan_id: int,
     plan_part_id: int,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Returns one plan row so the UI can update it without rebuilding the page."""
     rows = await _plan_parts_with_coverage(

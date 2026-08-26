@@ -46,7 +46,7 @@ async def _check_device_references(session: AsyncSession, device_id: int) -> lis
 @router.get("", response_model=list[DeviceRead])
 async def list_devices(
     include_archived: bool = Query(False, alias="include_archived"),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     q = select(Device).order_by(Device.id)
     if not include_archived:
@@ -56,7 +56,7 @@ async def list_devices(
 
 
 @router.post("", response_model=DeviceRead)
-async def create_device(data: DeviceCreate, session: AsyncSession = Depends(get_db)):
+async def create_device(data: DeviceCreate, session: AsyncSession = Depends(get_db, scope="function")):
     dump = data.model_dump()
     if dump.get("model") == "":
         dump["model"] = None
@@ -68,7 +68,7 @@ async def create_device(data: DeviceCreate, session: AsyncSession = Depends(get_
 
 
 @router.get("/{device_id}", response_model=DeviceRead)
-async def get_device(device_id: int, session: AsyncSession = Depends(get_db)):
+async def get_device(device_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(Device).where(Device.id == device_id))
     device = result.scalar_one_or_none()
     if not device:
@@ -77,7 +77,7 @@ async def get_device(device_id: int, session: AsyncSession = Depends(get_db)):
 
 
 @router.patch("/{device_id}", response_model=DeviceRead)
-async def update_device(device_id: int, data: DeviceUpdate, session: AsyncSession = Depends(get_db)):
+async def update_device(device_id: int, data: DeviceUpdate, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(Device).where(Device.id == device_id))
     device = result.scalar_one_or_none()
     if not device:
@@ -91,7 +91,7 @@ async def update_device(device_id: int, data: DeviceUpdate, session: AsyncSessio
 
 
 @router.patch("/{device_id}/archive", response_model=DeviceRead)
-async def archive_device(device_id: int, data: DeviceArchiveUpdate, session: AsyncSession = Depends(get_db)):
+async def archive_device(device_id: int, data: DeviceArchiveUpdate, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(Device).where(Device.id == device_id))
     device = result.scalar_one_or_none()
     if not device:
@@ -103,7 +103,7 @@ async def archive_device(device_id: int, data: DeviceArchiveUpdate, session: Asy
 
 
 @router.delete("/{device_id}", status_code=204)
-async def delete_device(device_id: int, session: AsyncSession = Depends(get_db)):
+async def delete_device(device_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(Device).where(Device.id == device_id))
     device = result.scalar_one_or_none()
     if not device:
@@ -120,13 +120,13 @@ async def delete_device(device_id: int, session: AsyncSession = Depends(get_db))
 
 
 @router.get("/{device_id}/aliases", response_model=list[DeviceAliasRead])
-async def list_device_aliases(device_id: int, session: AsyncSession = Depends(get_db)):
+async def list_device_aliases(device_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(DeviceAlias).where(DeviceAlias.device_id == device_id))
     return result.scalars().all()
 
 
 @router.post("/{device_id}/aliases", response_model=DeviceAliasRead)
-async def create_device_alias(device_id: int, data: DeviceAliasCreate, session: AsyncSession = Depends(get_db)):
+async def create_device_alias(device_id: int, data: DeviceAliasCreate, session: AsyncSession = Depends(get_db, scope="function")):
     alias = DeviceAlias(device_id=device_id, alias_name=data.alias_name)
     session.add(alias)
     await session.flush()
@@ -135,7 +135,7 @@ async def create_device_alias(device_id: int, data: DeviceAliasCreate, session: 
 
 
 @router.delete("/{device_id}/aliases/{alias_id}", status_code=204)
-async def delete_device_alias(device_id: int, alias_id: int, session: AsyncSession = Depends(get_db)):
+async def delete_device_alias(device_id: int, alias_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(
         select(DeviceAlias).where(DeviceAlias.id == alias_id, DeviceAlias.device_id == device_id)
     )

@@ -89,7 +89,7 @@ async def _check_part_references(session: AsyncSession, part_id: int) -> list[st
 @router.get("", response_model=list[PartRead])
 async def list_parts(
     include_archived: bool = Query(False, alias="include_archived"),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     q = select(Part).order_by(Part.id)
     if not include_archived:
@@ -99,7 +99,7 @@ async def list_parts(
 
 
 @router.get("/types", response_model=list[str])
-async def list_part_types(session: AsyncSession = Depends(get_db)):
+async def list_part_types(session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(
         select(Part.part_type)
         .where(Part.part_type.is_not(None), Part.is_archived == False)  # noqa: E712
@@ -110,7 +110,7 @@ async def list_part_types(session: AsyncSession = Depends(get_db)):
 
 
 @router.get("/suppliers", response_model=list[str])
-async def list_part_suppliers(session: AsyncSession = Depends(get_db)):
+async def list_part_suppliers(session: AsyncSession = Depends(get_db, scope="function")):
     """Уникальные поставщики всех существующих деталей для подсказок в форме.
 
     Дедупликация выполняется без учёта регистра, чтобы старые варианты вроде
@@ -134,7 +134,7 @@ async def list_part_suppliers(session: AsyncSession = Depends(get_db)):
 
 
 @router.post("", response_model=PartRead)
-async def create_part(data: PartCreate, session: AsyncSession = Depends(get_db)):
+async def create_part(data: PartCreate, session: AsyncSession = Depends(get_db, scope="function")):
     dump = _normalize_part_payload(data.model_dump())
     if not dump.get("name"):
         raise HTTPException(status_code=400, detail="Наименование детали обязательно")
@@ -147,7 +147,7 @@ async def create_part(data: PartCreate, session: AsyncSession = Depends(get_db))
 
 
 @router.get("/{part_id}", response_model=PartRead)
-async def get_part(part_id: int, session: AsyncSession = Depends(get_db)):
+async def get_part(part_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(Part).where(Part.id == part_id))
     part = result.scalar_one_or_none()
     if not part:
@@ -156,7 +156,7 @@ async def get_part(part_id: int, session: AsyncSession = Depends(get_db)):
 
 
 @router.patch("/{part_id}", response_model=PartRead)
-async def update_part(part_id: int, data: PartUpdate, session: AsyncSession = Depends(get_db)):
+async def update_part(part_id: int, data: PartUpdate, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(Part).where(Part.id == part_id))
     part = result.scalar_one_or_none()
     if not part:
@@ -175,7 +175,7 @@ async def update_part(part_id: int, data: PartUpdate, session: AsyncSession = De
 
 
 @router.patch("/{part_id}/archive", response_model=PartRead)
-async def archive_part(part_id: int, data: PartArchiveUpdate, session: AsyncSession = Depends(get_db)):
+async def archive_part(part_id: int, data: PartArchiveUpdate, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(Part).where(Part.id == part_id))
     part = result.scalar_one_or_none()
     if not part:
@@ -187,7 +187,7 @@ async def archive_part(part_id: int, data: PartArchiveUpdate, session: AsyncSess
 
 
 @router.delete("/{part_id}", status_code=204)
-async def delete_part(part_id: int, session: AsyncSession = Depends(get_db)):
+async def delete_part(part_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(Part).where(Part.id == part_id))
     part = result.scalar_one_or_none()
     if not part:

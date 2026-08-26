@@ -24,7 +24,7 @@ router = APIRouter(prefix="/invoices", tags=["invoices"])
 
 
 @router.get("", response_model=list[InvoiceRead])
-async def list_invoices(session: AsyncSession = Depends(get_db)):
+async def list_invoices(session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(Invoice).order_by(Invoice.invoice_date.desc()))
     return result.scalars().all()
 
@@ -86,7 +86,7 @@ async def create_invoice(
     description: str | None = Form(None),
     note: str | None = Form(None),
     file: UploadFile = File(...),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     dump = _parse_invoice_form_dates(
         invoice_no=invoice_no,
@@ -116,7 +116,7 @@ async def create_invoice(
 
 
 @router.get("/{invoice_id}", response_model=InvoiceRead)
-async def get_invoice(invoice_id: int, session: AsyncSession = Depends(get_db)):
+async def get_invoice(invoice_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(Invoice).where(Invoice.id == invoice_id))
     invoice = result.scalar_one_or_none()
     if not invoice:
@@ -125,7 +125,7 @@ async def get_invoice(invoice_id: int, session: AsyncSession = Depends(get_db)):
 
 
 @router.patch("/{invoice_id}", response_model=InvoiceRead)
-async def update_invoice(invoice_id: int, data: InvoiceUpdate, session: AsyncSession = Depends(get_db)):
+async def update_invoice(invoice_id: int, data: InvoiceUpdate, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(Invoice).where(Invoice.id == invoice_id))
     invoice = result.scalar_one_or_none()
     if not invoice:
@@ -146,7 +146,7 @@ async def update_invoice(invoice_id: int, data: InvoiceUpdate, session: AsyncSes
 
 
 @router.delete("/{invoice_id}", status_code=204)
-async def delete_invoice(invoice_id: int, session: AsyncSession = Depends(get_db)):
+async def delete_invoice(invoice_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(Invoice).where(Invoice.id == invoice_id))
     invoice = result.scalar_one_or_none()
     if not invoice:
@@ -161,7 +161,7 @@ async def delete_invoice(invoice_id: int, session: AsyncSession = Depends(get_db
 
 
 @router.get("/{invoice_id}/files", response_model=list[FileRead])
-async def list_invoice_files(invoice_id: int, session: AsyncSession = Depends(get_db)):
+async def list_invoice_files(invoice_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     if not await session.get(Invoice, invoice_id):
         raise HTTPException(404, "Invoice not found")
     result = await session.execute(
@@ -176,7 +176,7 @@ async def list_invoice_files(invoice_id: int, session: AsyncSession = Depends(ge
 async def upload_invoice_file(
     invoice_id: int,
     file: UploadFile = File(...),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     result = await session.execute(select(Invoice).where(Invoice.id == invoice_id))
     invoice = result.scalar_one_or_none()
@@ -195,7 +195,7 @@ async def upload_invoice_file(
 
 
 @router.get("/{invoice_id}/parts", response_model=list[InvoicePartLinkRead])
-async def list_invoice_parts(invoice_id: int, session: AsyncSession = Depends(get_db)):
+async def list_invoice_parts(invoice_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     if not await session.get(Invoice, invoice_id):
         raise HTTPException(404, "Invoice not found")
     result = await session.execute(select(InvoicePartLink).where(InvoicePartLink.invoice_id == invoice_id))
@@ -206,7 +206,7 @@ async def list_invoice_parts(invoice_id: int, session: AsyncSession = Depends(ge
 async def create_invoice_part_link(
     invoice_id: int,
     data: InvoicePartLinkCreate,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     result = await session.execute(select(Invoice).where(Invoice.id == invoice_id))
     if not result.scalar_one_or_none():
@@ -224,7 +224,7 @@ async def update_invoice_part_link(
     invoice_id: int,
     link_id: int,
     data: InvoicePartLinkUpdate,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     result = await session.execute(
         select(InvoicePartLink).where(
@@ -246,7 +246,7 @@ async def update_invoice_part_link(
 
 
 @router.delete("/{invoice_id}/parts/{link_id}", status_code=204)
-async def delete_invoice_part_link(invoice_id: int, link_id: int, session: AsyncSession = Depends(get_db)):
+async def delete_invoice_part_link(invoice_id: int, link_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(
         select(InvoicePartLink).where(
             InvoicePartLink.id == link_id,

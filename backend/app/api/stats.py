@@ -34,7 +34,7 @@ def _normalize_month_start(value: date | datetime) -> date:
 async def orders_devices_timeseries(
     date_from: date = Query(..., description="Начало периода (включительно)"),
     date_to: date = Query(..., description="Конец периода (включительно)"),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Сумма количества по позициям заказов (приборы) по календарному месяцу и прибору.
@@ -97,7 +97,7 @@ async def orders_devices_timeseries(
 async def orders_parts_monthly_timeseries(
     date_from: date = Query(..., description="Начало периода (включительно)"),
     date_to: date = Query(..., description="Конец периода (включительно)"),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     """
     Сумма количества деталей по календарному месяцу и детали.
@@ -172,7 +172,7 @@ async def orders_parts_timeseries(
     part_id: int = Query(..., description="ID детали"),
     date_from: date = Query(..., description="Начало периода (включительно)"),
     date_to: date = Query(..., description="Конец периода (включительно)"),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ):
     """Сумма количества прямых заказов детали по дате заказа в выбранном периоде."""
     if date_from > date_to:

@@ -97,7 +97,7 @@ def _part_to_dict(p: Part) -> dict:
 
 @router.get("/bom/export")
 async def export_bom(
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
     _: User = Depends(require_admin),
 ):
     """Выгрузить все приборы, активные спецификации и детали в JSON формата bulk_import.

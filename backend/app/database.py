@@ -86,6 +86,13 @@ async def wipe_application_schema(engine) -> None:
 
 
 async def get_db() -> AsyncSession:
+    """Request transaction committed before the HTTP response becomes observable.
+
+    Every API injection must use ``Depends(get_db, scope="function")``. FastAPI
+    0.118+ otherwise runs the code after ``yield`` after sending the response,
+    which breaks read-after-write when the frontend immediately refreshes a row.
+    ``test_db_transaction_scope`` guards that contract for new endpoints.
+    """
     async with async_session_maker() as session:
         try:
             yield session

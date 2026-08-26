@@ -19,7 +19,7 @@ router = APIRouter(tags=["bom"])
 
 
 @router.get("/devices/{device_id}/bom", response_model=list[BomVersionRead])
-async def list_device_bom(device_id: int, session: AsyncSession = Depends(get_db)):
+async def list_device_bom(device_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(
         select(DeviceBomVersion).where(DeviceBomVersion.device_id == device_id).order_by(DeviceBomVersion.version)
     )
@@ -27,7 +27,7 @@ async def list_device_bom(device_id: int, session: AsyncSession = Depends(get_db
 
 
 @router.post("/devices/{device_id}/bom", response_model=BomVersionRead)
-async def create_device_bom(device_id: int, data: BomVersionCreate, session: AsyncSession = Depends(get_db)):
+async def create_device_bom(device_id: int, data: BomVersionCreate, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(Device).where(Device.id == device_id))
     if not result.scalar_one_or_none():
         raise HTTPException(404, "Device not found")
@@ -67,7 +67,7 @@ async def create_device_bom(device_id: int, data: BomVersionCreate, session: Asy
 
 
 @router.get("/bom/{bom_id}", response_model=BomVersionRead)
-async def get_bom(bom_id: int, session: AsyncSession = Depends(get_db)):
+async def get_bom(bom_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(DeviceBomVersion).where(DeviceBomVersion.id == bom_id))
     bom = result.scalar_one_or_none()
     if not bom:
@@ -76,7 +76,7 @@ async def get_bom(bom_id: int, session: AsyncSession = Depends(get_db)):
 
 
 @router.patch("/bom/{bom_id}", response_model=BomVersionRead)
-async def update_bom(bom_id: int, data: BomVersionUpdate, session: AsyncSession = Depends(get_db)):
+async def update_bom(bom_id: int, data: BomVersionUpdate, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(DeviceBomVersion).where(DeviceBomVersion.id == bom_id))
     bom = result.scalar_one_or_none()
     if not bom:
@@ -106,7 +106,7 @@ async def update_bom(bom_id: int, data: BomVersionUpdate, session: AsyncSession 
 
 
 @router.delete("/bom/{bom_id}", status_code=204)
-async def delete_bom(bom_id: int, session: AsyncSession = Depends(get_db)):
+async def delete_bom(bom_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(DeviceBomVersion).where(DeviceBomVersion.id == bom_id))
     bom = result.scalar_one_or_none()
     if not bom:
@@ -138,13 +138,13 @@ async def delete_bom(bom_id: int, session: AsyncSession = Depends(get_db)):
 
 
 @router.get("/bom/{bom_id}/items", response_model=list[BomItemRead])
-async def list_bom_items(bom_id: int, session: AsyncSession = Depends(get_db)):
+async def list_bom_items(bom_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(DeviceBomItem).where(DeviceBomItem.bom_version_id == bom_id))
     return result.scalars().all()
 
 
 @router.post("/bom/{bom_id}/items", response_model=BomItemRead)
-async def create_bom_item(bom_id: int, data: BomItemCreate, session: AsyncSession = Depends(get_db)):
+async def create_bom_item(bom_id: int, data: BomItemCreate, session: AsyncSession = Depends(get_db, scope="function")):
     bom = await session.scalar(select(DeviceBomVersion).where(DeviceBomVersion.id == bom_id))
     if not bom:
         raise HTTPException(404, "BOM version not found")
@@ -206,7 +206,7 @@ async def create_bom_item(bom_id: int, data: BomItemCreate, session: AsyncSessio
 
 
 @router.patch("/bom/{bom_id}/items/{item_id}", response_model=BomItemRead)
-async def update_bom_item(bom_id: int, item_id: int, data: BomItemUpdate, session: AsyncSession = Depends(get_db)):
+async def update_bom_item(bom_id: int, item_id: int, data: BomItemUpdate, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(
         select(DeviceBomItem).where(DeviceBomItem.id == item_id, DeviceBomItem.bom_version_id == bom_id)
     )
@@ -221,7 +221,7 @@ async def update_bom_item(bom_id: int, item_id: int, data: BomItemUpdate, sessio
 
 
 @router.delete("/bom/{bom_id}/items/{item_id}", status_code=204)
-async def delete_bom_item(bom_id: int, item_id: int, session: AsyncSession = Depends(get_db)):
+async def delete_bom_item(bom_id: int, item_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(
         select(DeviceBomItem).where(DeviceBomItem.id == item_id, DeviceBomItem.bom_version_id == bom_id)
     )

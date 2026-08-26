@@ -310,10 +310,28 @@
     }
     savingDeliveredId = row.id;
     try {
-      await api.monthlyPlans.updatePlanPartDelivered(planId, row.id, String(v));
-      const [fresh] = await refreshPlanPartRows(planId, [row.id]);
-      if (fresh) {
-        deliverDraft = { ...deliverDraft, [fresh.id]: formatIntegerQty(fresh.qty_delivered) };
+      const saved = await api.monthlyPlans.updatePlanPartDelivered(planId, row.id, String(v));
+      // PATCH already returns the authoritative saved row. Do not immediately GET it
+      // again: with request-scoped DB dependencies that read could race the commit and
+      // briefly replace the saved value with the old one in the UI.
+      if (selectedPlanDetail && currentPlanId === planId) {
+        const qtyDelivered = saved.qty_delivered ?? String(v);
+        selectedPlanDetail = {
+          ...selectedPlanDetail,
+          parts: selectedPlanDetail.parts.map((current) => {
+            if (current.id !== row.id) return current;
+            const inventoryCovered = Number(current.qty_inventory_covered_total ?? 0);
+            const target = Number(saved.qty_final ?? current.qty_final ?? current.qty_required);
+            return {
+              ...current,
+              qty_final: saved.qty_final ?? current.qty_final,
+              qty_delivered: qtyDelivered,
+              qty_available_total: String(Math.min(target, Number(qtyDelivered) + inventoryCovered)),
+              delivery_complete: Number(qtyDelivered) + inventoryCovered >= target,
+            };
+          }),
+        };
+        deliverDraft = { ...deliverDraft, [row.id]: formatIntegerQty(qtyDelivered) };
       }
     } catch (e) {
       alert((e as Error).message);
@@ -1117,9 +1135,18 @@
     <div class="space-y-3">
       {#each planPartGroupKeys as groupKey (groupKey)}
         {@const groupParts = planPartGroups[groupKey] ?? []}
+        {@const groupDeliveryComplete = groupParts.length > 0 && groupParts.every(deliveryOk)}
 
-        <div class="overflow-hidden rounded-xl border border-zinc-700">
-          <div class="flex w-full items-center gap-2 bg-zinc-800 px-4 py-2.5">
+        <div
+          class="overflow-hidden rounded-xl border transition-colors {groupDeliveryComplete
+            ? 'border-emerald-500/60 bg-emerald-950/10 shadow-[0_0_0_1px_rgba(16,185,129,0.08)]'
+            : 'border-zinc-700'}"
+        >
+          <div
+            class="flex w-full items-center gap-2 px-4 py-2.5 transition-colors {groupDeliveryComplete
+              ? 'bg-emerald-950/70'
+              : 'bg-zinc-800'}"
+          >
             <input
               type="checkbox"
               checked={groupParts.length > 0 && groupParts.every((row) => selectedPlanPartIdSet.has(row.id))}
@@ -1141,7 +1168,7 @@
             {:else}
               <span class="shrink-0 whitespace-nowrap rounded border border-red-500/30 bg-red-500/15 px-1.5 py-0.5 text-[10px] text-red-300">не заказано</span>
             {/if}
-            {#if groupParts.every(deliveryOk)}
+            {#if groupDeliveryComplete}
               <span class="shrink-0 whitespace-nowrap rounded border border-emerald-500/30 bg-emerald-500/20 px-1.5 py-0.5 text-[10px] text-emerald-300">доставлено</span>
             {:else}
               <span class="shrink-0 whitespace-nowrap rounded border border-red-500/30 bg-red-500/15 px-1.5 py-0.5 text-[10px] text-red-300">не доставлено</span>

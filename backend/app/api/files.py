@@ -39,7 +39,7 @@ def _safe_media_type(content_type: str | None) -> str:
 
 
 @router.get("/{file_id}/download")
-async def download_file(file_id: int, session: AsyncSession = Depends(get_db)):
+async def download_file(file_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(
         select(FileModel).options(selectinload(FileModel.content)).where(FileModel.id == file_id)
     )

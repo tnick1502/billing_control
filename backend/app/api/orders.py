@@ -21,13 +21,13 @@ router = APIRouter(prefix="/orders", tags=["orders"])
 
 
 @router.get("", response_model=list[OrderRead])
-async def list_orders(session: AsyncSession = Depends(get_db)):
+async def list_orders(session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(Order).order_by(Order.order_date.desc()))
     return result.scalars().all()
 
 
 @router.post("", response_model=OrderRead)
-async def create_order(data: OrderCreate, session: AsyncSession = Depends(get_db)):
+async def create_order(data: OrderCreate, session: AsyncSession = Depends(get_db, scope="function")):
     order = Order(**data.model_dump())
     session.add(order)
     await session.flush()
@@ -36,7 +36,7 @@ async def create_order(data: OrderCreate, session: AsyncSession = Depends(get_db
 
 
 @router.get("/{order_id}", response_model=OrderRead)
-async def get_order(order_id: int, session: AsyncSession = Depends(get_db)):
+async def get_order(order_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(Order).where(Order.id == order_id))
     order = result.scalar_one_or_none()
     if not order:
@@ -45,7 +45,7 @@ async def get_order(order_id: int, session: AsyncSession = Depends(get_db)):
 
 
 @router.patch("/{order_id}", response_model=OrderRead)
-async def update_order(order_id: int, data: OrderUpdate, session: AsyncSession = Depends(get_db)):
+async def update_order(order_id: int, data: OrderUpdate, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(Order).where(Order.id == order_id))
     order = result.scalar_one_or_none()
     if not order:
@@ -58,7 +58,7 @@ async def update_order(order_id: int, data: OrderUpdate, session: AsyncSession =
 
 
 @router.delete("/{order_id}", status_code=204)
-async def delete_order(order_id: int, session: AsyncSession = Depends(get_db)):
+async def delete_order(order_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(select(Order).where(Order.id == order_id))
     order = result.scalar_one_or_none()
     if not order:
@@ -68,7 +68,7 @@ async def delete_order(order_id: int, session: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{order_id}/items", response_model=list[OrderItemRead])
-async def list_order_items(order_id: int, session: AsyncSession = Depends(get_db)):
+async def list_order_items(order_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     if not await session.get(Order, order_id):
         raise HTTPException(404, "Order not found")
     result = await session.execute(
@@ -80,7 +80,7 @@ async def list_order_items(order_id: int, session: AsyncSession = Depends(get_db
 
 
 @router.post("/{order_id}/items", response_model=OrderItemRead)
-async def create_order_item(order_id: int, data: OrderItemCreate, session: AsyncSession = Depends(get_db)):
+async def create_order_item(order_id: int, data: OrderItemCreate, session: AsyncSession = Depends(get_db, scope="function")):
     dump = data.model_dump()
     if not dump.get("bom_version_id"):
         # Default: active or current BOM for device
@@ -107,7 +107,7 @@ async def create_order_item(order_id: int, data: OrderItemCreate, session: Async
 
 
 @router.patch("/{order_id}/items/{item_id}", response_model=OrderItemRead)
-async def update_order_item(order_id: int, item_id: int, data: OrderItemUpdate, session: AsyncSession = Depends(get_db)):
+async def update_order_item(order_id: int, item_id: int, data: OrderItemUpdate, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(
         select(OrderItem).where(OrderItem.id == item_id, OrderItem.order_id == order_id)
     )
@@ -126,7 +126,7 @@ async def update_order_item(order_id: int, item_id: int, data: OrderItemUpdate, 
 
 
 @router.delete("/{order_id}/items/{item_id}", status_code=204)
-async def delete_order_item(order_id: int, item_id: int, session: AsyncSession = Depends(get_db)):
+async def delete_order_item(order_id: int, item_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(
         select(OrderItem).where(OrderItem.id == item_id, OrderItem.order_id == order_id)
     )
@@ -138,7 +138,7 @@ async def delete_order_item(order_id: int, item_id: int, session: AsyncSession =
 
 
 @router.get("/{order_id}/part-items", response_model=list[OrderPartItemRead])
-async def list_order_part_items(order_id: int, session: AsyncSession = Depends(get_db)):
+async def list_order_part_items(order_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     if not await session.get(Order, order_id):
         raise HTTPException(404, "Order not found")
     result = await session.execute(select(OrderPartItem).where(OrderPartItem.order_id == order_id))
@@ -146,7 +146,7 @@ async def list_order_part_items(order_id: int, session: AsyncSession = Depends(g
 
 
 @router.post("/{order_id}/part-items", response_model=OrderPartItemRead)
-async def create_order_part_item(order_id: int, data: OrderPartItemCreate, session: AsyncSession = Depends(get_db)):
+async def create_order_part_item(order_id: int, data: OrderPartItemCreate, session: AsyncSession = Depends(get_db, scope="function")):
     item = OrderPartItem(order_id=order_id, **data.model_dump())
     session.add(item)
     await session.flush()
@@ -155,7 +155,7 @@ async def create_order_part_item(order_id: int, data: OrderPartItemCreate, sessi
 
 
 @router.patch("/{order_id}/part-items/{item_id}", response_model=OrderPartItemRead)
-async def update_order_part_item(order_id: int, item_id: int, data: OrderPartItemUpdate, session: AsyncSession = Depends(get_db)):
+async def update_order_part_item(order_id: int, item_id: int, data: OrderPartItemUpdate, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(
         select(OrderPartItem).where(OrderPartItem.id == item_id, OrderPartItem.order_id == order_id)
     )
@@ -170,7 +170,7 @@ async def update_order_part_item(order_id: int, item_id: int, data: OrderPartIte
 
 
 @router.delete("/{order_id}/part-items/{item_id}", status_code=204)
-async def delete_order_part_item(order_id: int, item_id: int, session: AsyncSession = Depends(get_db)):
+async def delete_order_part_item(order_id: int, item_id: int, session: AsyncSession = Depends(get_db, scope="function")):
     result = await session.execute(
         select(OrderPartItem).where(OrderPartItem.id == item_id, OrderPartItem.order_id == order_id)
     )
