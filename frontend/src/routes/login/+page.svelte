@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from '$lib/api';
+  import { firstAllowedPath } from '$lib/permissions';
 
   let username = '';
   let password = '';
@@ -10,8 +11,10 @@
     error = '';
     loading = true;
     try {
-      await api.auth.login({ username, password });
-      window.location.replace(`${window.location.origin}/monthly-plans`);
+      const result = await api.auth.login({ username, password });
+      // Стартовая страница — первый доступный роли раздел (у роли может не быть планов).
+      const target = firstAllowedPath(result.user) ?? '/';
+      window.location.replace(`${window.location.origin}${target}`);
     } catch (e) {
       error = (e as Error).message;
     } finally {

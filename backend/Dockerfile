@@ -12,4 +12,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 ENV PYTHONPATH=/app
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
+# Один процесс (без --workers): лимит соединений с БД = DB_POOL_SIZE, кеш авторизации точный.
+# --timeout-graceful-shutdown меньше stop_grace_period (30 с): пул БД успевает закрыться штатно.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info", "--timeout-graceful-shutdown", "20"]

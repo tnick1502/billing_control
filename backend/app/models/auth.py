@@ -1,9 +1,33 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+
+class Role(Base):
+    """Роль с правами по разделам (см. ``app.permissions``).
+
+    ``code`` — неизменяемый ключ, он хранится в ``users.role``. ``revision`` растёт при каждой
+    правке прав: по паре (code, revision) кешируется разобранная политика.
+    """
+
+    __tablename__ = "roles"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    is_superuser: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    permissions: Mapped[dict] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=False, default=dict, server_default="{}"
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
 
 class User(Base):
@@ -13,7 +37,13 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     password: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    role: Mapped[str] = mapped_column(String(32), nullable=False, default="employee")
+    # Код роли (roles.code). FK с именем, чтобы schema_ensure не создал дубликат на старых БД.
+    role: Mapped[str] = mapped_column(
+        String(32),
+        ForeignKey("roles.code", name="fk_users_role_roles", onupdate="CASCADE", ondelete="RESTRICT"),
+        nullable=False,
+        default="employee",
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())

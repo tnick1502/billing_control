@@ -10,11 +10,18 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, IntegrityError, TimeoutError as SQLAlchemyTimeoutError
 
-from app.auth import auth_middleware, ensure_default_users
+from app.auth import auth_middleware, ensure_default_roles, ensure_default_users, warn_if_no_active_admins
 from app.config import settings
 from app.api import auth, bom, devices, files, imports, invoices, monthly_plans, orders, parts, stats
-from app.database import Base, async_session_maker, engine, pool_snapshot, wipe_application_schema
-from app.schema_ensure import ensure_schema
+from app.database import (
+    Base,
+    async_session_maker,
+    engine,
+    pool_snapshot,
+    reap_stale_connections,
+    wipe_application_schema,
+)
+from app.schema_ensure import ensure_schema, ensure_users_role_fk
 from app.seeds.init_data import seed_database
 
 log = logging.getLogger(__name__)
@@ -44,7 +51,8 @@ def _cors_allow_origins() -> list[str]:
 async def lifespan(app: FastAPI):
     log.info(
         "startup db_ssl=%s db_ssl_verify=%s db_pool_size=%s db_max_overflow=%s "
-        "db_connection_budget=%s db_pool_timeout=%ss db_pool_recycle=%ss log_requests=%s",
+        "db_connection_budget=%s db_pool_timeout=%ss db_pool_recycle=%ss log_requests=%s "
+        "app_name=%s db_reap_on_startup=%s db_server_timeouts=%s auth_cache_ttl=%ss",
         settings.database_ssl,
         settings.database_ssl_verify,
         settings.db_pool_size,
@@ -53,7 +61,15 @@ async def lifespan(app: FastAPI):
         settings.db_pool_timeout,
         settings.db_pool_recycle,
         settings.log_requests,
+        settings.db_application_name,
+        settings.db_reap_on_startup,
+        settings.db_server_timeouts,
+        settings.auth_cache_ttl_seconds,
     )
+    # Первое обращение к БД: закрыть соединения, оставшиеся от прошлых запусков (SIGKILL, падение).
+    if settings.db_reap_on_startup:
+        await reap_stale_connections()
+
     if settings.wipe_db:
         await wipe_application_schema(engine)
 
@@ -80,11 +96,17 @@ async def lifespan(app: FastAPI):
                 await session.rollback()
                 print(f"Seed warning: {e}")
 
+    # Порядок важен: сначала роли (и «осиротевшие» коды ролей), потом FK, потом пользователи.
+    await ensure_default_roles()
+    await ensure_users_role_fk()
     await ensure_default_users()
+    await warn_if_no_active_admins()
 
     yield
 
+    log.info("shutdown: закрываю пул соединений БД (%s)", _pool_status())
     await engine.dispose()
+    log.info("shutdown: пул закрыт")
 
 
 app = FastAPI(

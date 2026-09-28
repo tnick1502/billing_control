@@ -26,11 +26,27 @@ class Settings(BaseSettings):
     # Таймауты и пул для удалённой БД: чтобы запросы падали быстро, а не висели бесконечно.
     db_connect_timeout: int = 10   # сек на установку соединения с БД
     db_command_timeout: int = 30   # сек на один запрос
-    db_pool_size: int = 2          # постоянных соединений в пуле (на воркер)
+    db_pool_size: int = 5          # постоянных соединений в пуле (на воркер)
     db_max_overflow: int = 0       # сверх пула под пик; для managed-БД безопаснее не создавать
-    db_connection_budget: int = 2  # жёсткий максимум pool_size + max_overflow на воркер
+    db_connection_budget: int = 5  # жёсткий максимум pool_size + max_overflow на воркер
     db_pool_timeout: int = 15      # сек ждать свободное соединение, затем 503
     db_pool_recycle: int = 1800    # сек, пересоздавать соединение (managed-БД закрывает простаивающие)
+
+    # Имя экземпляра: попадает в application_name соединений ("billing_control:prod").
+    # По нему уборщик находит «свои» старые соединения и не трогает чужие (dev, psql, бэкапы).
+    app_instance: str = "prod"
+    # При старте закрыть соединения, оставшиеся от прошлых запусков этого же экземпляра
+    # (после SIGKILL/падения/перезагрузки). Никогда не мешает старту: ошибки только логируются.
+    db_reap_on_startup: bool = True
+    # Серверные тайм-ауты на каждое соединение (самоочистка на стороне PostgreSQL):
+    # зависшие транзакции, «осиротевшие» простаивающие сессии, мёртвые TCP-клиенты.
+    db_server_timeouts: bool = True
+    db_idle_in_transaction_timeout: int = 300   # сек; 0 — не задавать
+
+    # Кеш авторизации (сессия + права) в памяти процесса. 0 — выключен (каждый запрос читает БД).
+    # Данные (планы, счета и т.д.) не кешируются никогда — только «кто пользователь и что ему можно».
+    auth_cache_ttl_seconds: int = 0
+    auth_cache_max_entries: int = 1000
 
     # Логи приложения. LOG_REQUESTS=true пишет одну итоговую строку на каждый HTTP-запрос.
     log_level: str = "INFO"
@@ -61,6 +77,8 @@ class Settings(BaseSettings):
         "force_reseed",
         "wipe_db",
         "log_requests",
+        "db_reap_on_startup",
+        "db_server_timeouts",
         mode="before",
     )
     @classmethod
@@ -95,6 +113,32 @@ class Settings(BaseSettings):
         if v < 1:
             raise ValueError("значение должно быть больше нуля")
         return v
+
+    @field_validator("db_idle_in_transaction_timeout", "auth_cache_ttl_seconds")
+    @classmethod
+    def non_negative_seconds(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("значение не может быть отрицательным")
+        return v
+
+    @field_validator("auth_cache_max_entries")
+    @classmethod
+    def positive_cache_size(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("значение должно быть больше нуля")
+        return v
+
+    @field_validator("app_instance")
+    @classmethod
+    def normalize_app_instance(cls, v: str) -> str:
+        value = v.strip().lower()
+        if not value or not value.replace("-", "").replace("_", "").isalnum() or len(value) > 32:
+            raise ValueError("APP_INSTANCE: латиница/цифры/-/_, до 32 символов (например prod, dev)")
+        return value
+
+    @property
+    def db_application_name(self) -> str:
+        return f"billing_control:{self.app_instance}"
 
     @field_validator("db_max_overflow")
     @classmethod

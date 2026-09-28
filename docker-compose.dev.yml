@@ -17,6 +17,9 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    # uvicorn завершает запросы за 20 с (--timeout-graceful-shutdown) и закрывает пул БД;
+    # Docker ждёт 30 с до SIGKILL, поэтому соединения закрываются штатно.
+    stop_grace_period: 30s
     ports:
       - "${DEV_BACKEND_PORT:-8000}:8000"
     healthcheck:
@@ -40,6 +43,12 @@ services:
       DB_CONNECTION_BUDGET: ${DB_CONNECTION_BUDGET:?Set DB_CONNECTION_BUDGET in .env}
       DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:?Set DB_POOL_TIMEOUT in .env}
       DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:?Set DB_POOL_RECYCLE in .env}
+      # Новые параметры имеют безопасные значения по умолчанию — старый .env продолжит работать.
+      APP_INSTANCE: dev
+      DB_REAP_ON_STARTUP: ${DB_REAP_ON_STARTUP:-true}
+      DB_SERVER_TIMEOUTS: ${DB_SERVER_TIMEOUTS:-true}
+      DB_IDLE_IN_TRANSACTION_TIMEOUT: ${DB_IDLE_IN_TRANSACTION_TIMEOUT:-300}
+      AUTH_CACHE_TTL_SECONDS: ${AUTH_CACHE_TTL_SECONDS:-0}
       LOG_LEVEL: ${LOG_LEVEL:?Set LOG_LEVEL in .env}
       LOG_REQUESTS: ${LOG_REQUESTS:?Set LOG_REQUESTS in .env}
       SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:?Set SESSION_TTL_HOURS in .env}

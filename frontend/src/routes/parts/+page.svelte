@@ -2,6 +2,11 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import type { Part, PartCreate } from '$lib/api';
+  import { can } from '$lib/permissions';
+
+  // Права раздела «Детали»: edit — создание и правка, full — архивация и удаление.
+  $: canEdit = $can('parts', 'edit');
+  $: canFull = $can('parts', 'full');
 
   const NO_TYPE_LABEL = 'Без типа';
   const EXPANDED_STORAGE_KEY = 'parts:expandedGroups';
@@ -257,9 +262,11 @@
 <div class="p-8">
   <div class="flex justify-between items-center mb-6">
     <h1 class="text-2xl font-bold text-white">Детали</h1>
-    <button on:click={openCreate} class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400 transition-colors">
-      Добавить
-    </button>
+    {#if canEdit}
+      <button on:click={openCreate} class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400 transition-colors">
+        Добавить
+      </button>
+    {/if}
   </div>
 
   <div class="mb-4 rounded-xl border border-zinc-700 bg-surface-800 p-4 flex flex-col gap-3 sm:flex-row sm:items-end">
@@ -380,12 +387,13 @@
   <div class="fixed inset-0 bg-black/60 flex items-center justify-center z-50" on:click={() => modalOpen = false} role="button" tabindex="0" on:keydown={(e) => e.key === 'Escape' && (modalOpen = false)}>
     <div class="bg-surface-800 rounded-xl p-6 w-full max-w-md border border-zinc-700" on:click|stopPropagation role="dialog">
       <h2 class="text-lg font-semibold text-white mb-4">
-        {editingId ? `Редактировать деталь #${editingId}` : 'Новая деталь'}
+        {editingId ? (canEdit ? `Редактировать деталь #${editingId}` : `Деталь #${editingId}`) : 'Новая деталь'}
         {#if editingIsArchived}
           <span class="ml-2 text-sm px-2 py-0.5 bg-zinc-700 text-zinc-400 rounded">Архив</span>
         {/if}
       </h2>
       <form on:submit|preventDefault={save} class="space-y-4">
+        <fieldset disabled={!canEdit} class="min-w-0 space-y-4">
         {#if editingId}
           <div>
             <label class="block text-sm text-zinc-400 mb-1">ID</label>
@@ -461,10 +469,13 @@
           <label class="block text-sm text-zinc-400 mb-1">Описание</label>
           <textarea bind:value={form.description} rows="2" placeholder="Опционально" class="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-lg text-white" />
         </div>
+        </fieldset>
         <div class="flex flex-wrap gap-2 pt-2">
-          <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Сохранить</button>
-          <button type="button" on:click={() => modalOpen = false} class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600">Отмена</button>
-          {#if editingId !== null}
+          {#if canEdit}
+            <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">Сохранить</button>
+          {/if}
+          <button type="button" on:click={() => modalOpen = false} class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600">{canEdit ? 'Отмена' : 'Закрыть'}</button>
+          {#if editingId !== null && canFull}
             <button
               type="button"
               on:click={() => toggleArchive(editingId, editingIsArchived)}

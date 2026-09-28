@@ -14,13 +14,14 @@ import logging
 import os
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import require_admin
+from app.auth import get_current_user, get_policy, require_admin
+from app.permissions import FULL
 from app.config import settings
 from app.database import async_session_maker, get_db
 from app.models import Device, DeviceBomItem, DeviceBomVersion, Part, User
@@ -33,13 +34,21 @@ log = logging.getLogger(__name__)
 
 @router.post("/bom")
 async def import_bom(
+    request: Request,
     file: UploadFile = File(...),
     dry_run: bool = Query(False, description="Проверить и посчитать, ничего не записывая"),
     update_existing: bool = Query(
         False, description="Пересобрать состав уже существующих версий спецификаций"
     ),
-    _: User = Depends(require_admin),
+    # Доступ проверяет middleware по разделу «Загрузка спецификаций» (import: edit / view).
+    _: User = Depends(get_current_user),
 ):
+    # Пересборка состава существующих спецификаций удаляет строки BOM — это уровень «Полный».
+    if update_existing and not dry_run and get_policy(request).level("import") < FULL:
+        raise HTTPException(
+            status_code=403,
+            detail="Пересборка существующих спецификаций требует уровня «Полный» в разделе «Загрузка спецификаций»",
+        )
     raw_bytes = await file.read()
     if not raw_bytes:
         return JSONResponse(status_code=400, content={"detail": "Файл пустой"})
@@ -98,7 +107,8 @@ def _part_to_dict(p: Part) -> dict:
 @router.get("/bom/export")
 async def export_bom(
     session: AsyncSession = Depends(get_db, scope="function"),
-    _: User = Depends(require_admin),
+    # Доступ проверяет middleware по разделу «Загрузка спецификаций» (import: edit / view).
+    _: User = Depends(get_current_user),
 ):
     """Выгрузить все приборы, активные спецификации и детали в JSON формата bulk_import.
 

@@ -46,9 +46,49 @@ class UserRead(BaseSchema):
     updated_at: datetime
 
 
+class MeRead(UserRead):
+    """Текущий пользователь + его права (для меню, кнопок и защиты маршрутов на фронте)."""
+
+    role_name: str | None = None
+    is_superuser: bool = False
+    permissions: dict[str, str] = Field(default_factory=dict)
+
+
+class UserListRead(UserRead):
+    role_name: str | None = None
+
+
 class AuthToken(BaseModel):
     token: str
-    user: UserRead
+    user: MeRead
+
+
+class RoleRead(BaseSchema):
+    id: int
+    code: str
+    name: str
+    description: str | None
+    is_system: bool
+    is_superuser: bool
+    permissions: dict[str, str]
+    revision: int
+    users_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class RoleCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=2000)
+    permissions: dict[str, str] = Field(default_factory=dict)
+
+
+class RoleUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    description: str | None = Field(default=None, max_length=2000)
+    permissions: dict[str, str] | None = None
+    # Защита от одновременной правки двумя админами: ревизия, которую видел редактор.
+    revision: int | None = None
 
 
 class AuditLogRead(BaseSchema):

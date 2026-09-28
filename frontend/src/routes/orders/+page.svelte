@@ -3,6 +3,12 @@
   import { api } from '$lib/api';
   import { formatQty, formatDate } from '$lib/format';
   import type { Order, OrderCreate, OrderItem, OrderItemCreate, OrderPartItem, OrderPartItemCreate, BomVersion } from '$lib/api';
+  import { can } from '$lib/permissions';
+
+  // Права раздела «Заказы»: edit — создание/правка заказов и их строк (включая удаление строк),
+  // full — ещё и удаление заказа целиком.
+  $: canEdit = $can('orders', 'edit');
+  $: canFull = $can('orders', 'full');
 
   type CalendarDay = {
     date: string;
@@ -452,9 +458,11 @@
           →
         </button>
       {/if}
-      <button type="button" on:click={() => openCreate()} class="px-4 py-1.5 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400 transition-colors">
-        Добавить
-      </button>
+      {#if canEdit}
+        <button type="button" on:click={() => openCreate()} class="px-4 py-1.5 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400 transition-colors">
+          Добавить
+        </button>
+      {/if}
     </div>
   </div>
 
@@ -487,13 +495,15 @@
                 >
                   {day.day}
                 </button>
-                <button
-                  type="button"
-                  on:click={() => openCreate(day.date)}
-                  class="rounded bg-zinc-700 px-1.5 py-0.5 text-[10px] font-medium text-zinc-100 hover:bg-amber-400 hover:text-black"
-                >
-                  + Заказ
-                </button>
+                {#if canEdit}
+                  <button
+                    type="button"
+                    on:click={() => openCreate(day.date)}
+                    class="rounded bg-zinc-700 px-1.5 py-0.5 text-[10px] font-medium text-zinc-100 hover:bg-amber-400 hover:text-black"
+                  >
+                    + Заказ
+                  </button>
+                {/if}
               </div>
 
               {#if day.orders.length > 0}
@@ -618,17 +628,19 @@
           <h2 class="text-lg font-semibold text-white">Заказы за {dayLabel(selectedDayDate)}</h2>
           <p class="text-sm text-zinc-400">Всего: {selectedDayOrders.length}</p>
         </div>
-        <button
-          type="button"
-          on:click={() => {
-            const date = selectedDayDate ?? isoDate(new Date());
-            selectedDayDate = null;
-            openCreate(date);
-          }}
-          class="px-3 py-1.5 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400"
-        >
-          + Заказ
-        </button>
+        {#if canEdit}
+          <button
+            type="button"
+            on:click={() => {
+              const date = selectedDayDate ?? isoDate(new Date());
+              selectedDayDate = null;
+              openCreate(date);
+            }}
+            class="px-3 py-1.5 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400"
+          >
+            + Заказ
+          </button>
+        {/if}
       </div>
 
       {#if selectedDayOrders.length === 0}
@@ -674,7 +686,7 @@
       <h2 class="text-lg font-semibold text-white mb-4">{editingId ? `Заказ #${editingId}` : 'Новый заказ'}</h2>
 
       <form on:submit|preventDefault={save} class="rounded-xl border border-zinc-700 bg-zinc-900/35 p-4">
-        <div class="grid gap-4 md:grid-cols-2">
+        <fieldset disabled={!canEdit} class="min-w-0 grid gap-4 md:grid-cols-2">
           {#if editingId}
             <div>
               <label class="block text-sm text-zinc-400 mb-1">ID</label>
@@ -697,14 +709,16 @@
             <label class="block text-sm text-zinc-400 mb-1">Описание</label>
             <textarea bind:value={form.description} rows="2" placeholder="Опционально" class="w-full px-3 py-2 bg-zinc-950 border border-zinc-700 rounded-lg text-white" />
           </div>
-        </div>
+        </fieldset>
 
         <div class="flex flex-wrap gap-2 pt-4">
-          <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">
-            {selectedOrder ? 'Сохранить заказ' : 'Создать заказ'}
-          </button>
+          {#if canEdit}
+            <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">
+              {selectedOrder ? 'Сохранить заказ' : 'Создать заказ'}
+            </button>
+          {/if}
           <button type="button" on:click={closeOrderModal} class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600">Закрыть</button>
-          {#if selectedOrder}
+          {#if selectedOrder && canFull}
             <button type="button" on:click={() => remove(selectedOrder.id)} class="ml-auto px-4 py-2 bg-red-700 text-white rounded-lg hover:bg-red-600">Удалить</button>
           {/if}
         </div>
@@ -718,7 +732,7 @@
       <div class="mt-5 rounded-xl border border-zinc-700 bg-zinc-950/30 p-4">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h3 class="text-base font-semibold text-white">Позиции заказа</h3>
-          {#if selectedOrder}
+          {#if selectedOrder && canEdit}
             <div class="flex gap-2">
               <button on:click={openAddItem} class="px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 text-sm">+ Прибор</button>
               <button on:click={openAddPartItem} class="px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 text-sm">+ Деталь</button>
@@ -752,8 +766,10 @@
                   <td class="px-3 py-2 font-mono">{formatQty(i.qty)}</td>
                   <td class="px-3 py-2">{formatQty(i.price)}</td>
                   <td>
-                    <button on:click={() => openEditItem(i)} class="text-amber-500 text-sm mr-2">Изм.</button>
-                    <button on:click={() => removeItem(i.id)} class="text-red-400 text-sm">Удал.</button>
+                    {#if canEdit}
+                      <button on:click={() => openEditItem(i)} class="text-amber-500 text-sm mr-2">Изм.</button>
+                      <button on:click={() => removeItem(i.id)} class="text-red-400 text-sm">Удал.</button>
+                    {/if}
                   </td>
                 </tr>
               {/each}
@@ -777,8 +793,10 @@
                   <td class="px-3 py-2 font-mono">{formatQty(i.qty)}</td>
                   <td class="px-3 py-2">{formatQty(i.price)}</td>
                   <td>
-                    <button on:click={() => openEditPartItem(i)} class="text-amber-500 text-sm mr-2">Изм.</button>
-                    <button on:click={() => removePartItem(i.id)} class="text-red-400 text-sm">Удал.</button>
+                    {#if canEdit}
+                      <button on:click={() => openEditPartItem(i)} class="text-amber-500 text-sm mr-2">Изм.</button>
+                      <button on:click={() => removePartItem(i.id)} class="text-red-400 text-sm">Удал.</button>
+                    {/if}
                   </td>
                 </tr>
               {/each}

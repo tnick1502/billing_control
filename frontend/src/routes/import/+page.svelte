@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import type { ImportResult, User } from '$lib/api';
+  import type { ImportResult } from '$lib/api';
+  import { can, currentUser } from '$lib/permissions';
 
   let file: File | null = null;
   let updateExisting = false;
@@ -11,20 +11,13 @@
   let resultIsDryRun = false;
   let exportingBom = false;
   let dumpingDb = false;
-  let currentUser: User | null = null;
-  let userLoaded = false;
-
-  onMount(async () => {
-    try {
-      currentUser = await api.auth.me();
-    } catch {
-      currentUser = null;
-    } finally {
-      userLoaded = true;
-    }
-  });
-
-  $: isAdmin = currentUser?.role === 'admin';
+  // Права: загрузка — «Изменение», пересборка существующих спецификаций — «Полный»,
+  // выгрузка JSON — «Просмотр», полный SQL-дамп БД — только администратор.
+  $: canUpload = $can('import', 'edit');
+  $: canRebuild = $can('import', 'full');
+  $: canExport = $can('import', 'view');
+  $: canDump = !!$currentUser?.is_superuser;
+  $: if (!canRebuild) updateExisting = false;
 
   function onFileChange(e: Event) {
     const input = e.target as HTMLInputElement;
@@ -98,15 +91,14 @@
     </p>
   </div>
 
-  {#if userLoaded && !isAdmin}
+  {#if !canExport}
     <div class="rounded-xl border border-red-800/80 bg-red-950/60 p-5 text-sm text-red-100">
       <span class="font-semibold">Доступ ограничен.</span>
-      Загрузка и выгрузка спецификаций, а также скачивание дампа БД доступны только администратору.
+      У вашей роли нет доступа к загрузке спецификаций.
     </div>
-  {:else if !userLoaded}
-    <p class="text-sm text-zinc-400">Проверка прав…</p>
   {:else}
 
+  {#if canUpload}
   <div class="rounded-xl border border-zinc-700 bg-surface-800 p-5 space-y-4">
     <div>
       <label class="block text-xs text-zinc-400 mb-1" for="import-file">Файл импорта (.json)</label>
@@ -122,10 +114,12 @@
       {/if}
     </div>
 
-    <label class="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer select-none">
-      <input type="checkbox" bind:checked={updateExisting} class="w-4 h-4 accent-amber-500" />
-      Пересобирать состав уже существующих спецификаций
-    </label>
+    {#if canRebuild}
+      <label class="flex items-center gap-2 text-sm text-zinc-300 cursor-pointer select-none">
+        <input type="checkbox" bind:checked={updateExisting} class="w-4 h-4 accent-amber-500" />
+        Пересобирать состав уже существующих спецификаций
+      </label>
+    {/if}
 
     <div class="flex gap-3 pt-1">
       <button
@@ -148,6 +142,7 @@
       <p class="text-sm text-zinc-400">Обработка...</p>
     {/if}
   </div>
+  {/if}
 
   {#if error}
     <div class="mt-4 rounded-xl border border-red-800/80 bg-red-950/60 p-4 text-sm text-red-100">
@@ -158,7 +153,7 @@
   <div class="mt-4 rounded-xl border border-zinc-700 bg-surface-800 p-5">
     <h2 class="text-lg font-semibold text-white mb-1">Выгрузка из базы</h2>
     <p class="text-sm text-zinc-400 mb-4">
-      Скачать текущее состояние БД — JSON в том же формате, что и загрузка, или полный SQL-дамп.
+      Скачать текущее состояние БД — JSON в том же формате, что и загрузка{canDump ? ', или полный SQL-дамп' : ''}.
     </p>
     <div class="flex flex-wrap gap-3">
       <button
@@ -169,14 +164,16 @@
       >
         {exportingBom ? 'Готовим JSON…' : 'Скачать JSON спецификаций'}
       </button>
-      <button
-        type="button"
-        on:click={dumpDb}
-        disabled={dumpingDb}
-        class="px-4 py-2 rounded-lg border border-zinc-600 text-zinc-200 font-medium hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-      >
-        {dumpingDb ? 'Готовим дамп…' : 'Скачать SQL-дамп БД'}
-      </button>
+      {#if canDump}
+        <button
+          type="button"
+          on:click={dumpDb}
+          disabled={dumpingDb}
+          class="px-4 py-2 rounded-lg border border-zinc-600 text-zinc-200 font-medium hover:bg-zinc-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {dumpingDb ? 'Готовим дамп…' : 'Скачать SQL-дамп БД'}
+        </button>
+      {/if}
     </div>
   </div>
 

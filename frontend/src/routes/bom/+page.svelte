@@ -2,6 +2,10 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import type { Device, Part, BomVersion, BomItem, BomVersionCreate, BomItemCreate } from '$lib/api';
+  import { can } from '$lib/permissions';
+
+  // Права раздела «Спецификации»: edit — версии, статусы и состав (включая удаление строк).
+  $: canEdit = $can('bom', 'edit');
 
   let devices: Device[] = [];
   let parts: Part[] = [];
@@ -312,7 +316,9 @@
       {#if selectedDevice}
         <div class="mb-4 flex justify-between items-center">
           <h2 class="text-lg text-white">BOM для {selectedDevice.primary_name}</h2>
-          <button on:click={openCreateBom} class="px-3 py-1.5 bg-amber-500 text-black rounded-lg hover:bg-amber-400 text-sm">Новая версия</button>
+          {#if canEdit}
+            <button on:click={openCreateBom} class="px-3 py-1.5 bg-amber-500 text-black rounded-lg hover:bg-amber-400 text-sm">Новая версия</button>
+          {/if}
         </div>
         <div class="space-y-2 mb-4">
           {#each boms as b}
@@ -331,6 +337,7 @@
                 <span class="text-zinc-400 text-sm truncate max-w-[200px]" title={b.description}>{b.description}</span>
               {/if}
               <span class="px-2 py-0.5 rounded text-sm {b.status === 'active' ? 'bg-emerald-600' : b.status === 'current' ? 'bg-amber-600' : 'bg-zinc-700'}">{statusLabel(b.status)}</span>
+              {#if canEdit}
               <div class="flex gap-1 ml-auto" role="presentation" on:click|stopPropagation>
                 {#if b.status !== 'active'}
                   <button on:click={() => setBomStatus(b.id, 'active')} class="text-emerald-500 text-sm px-2">Активная</button>
@@ -342,13 +349,16 @@
                   <button on:click={() => setBomStatus(b.id, 'archived')} class="text-zinc-400 text-sm px-2">Архивная</button>
                 {/if}
               </div>
+              {/if}
             </div>
           {/each}
         </div>
 
         {#if selectedBom}
           <div>
-            <button on:click={openAddItem} class="mb-4 px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 text-sm">+ Добавить компонент</button>
+            {#if canEdit}
+              <button on:click={openAddItem} class="mb-4 px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-500 text-sm">+ Добавить компонент</button>
+            {/if}
             {#if bomItems.length === 0}
               <div class="rounded-xl border border-zinc-700 px-4 py-6 text-center text-zinc-500">
                 Нет компонентов. Добавьте деталь или подприбор.
@@ -376,11 +386,11 @@
                         <tbody class="divide-y divide-zinc-800">
                           {#each group.items as i}
                             <tr
-                              class="cursor-pointer hover:bg-zinc-800/50"
-                              role="button"
-                              tabindex="0"
-                              on:click={() => openEditItem(i)}
-                              on:keydown={(event) => handleItemRowKeydown(event, i)}
+                              class="{canEdit ? 'cursor-pointer' : ''} hover:bg-zinc-800/50"
+                              role={canEdit ? 'button' : undefined}
+                              tabindex={canEdit ? 0 : undefined}
+                              on:click={() => canEdit && openEditItem(i)}
+                              on:keydown={(event) => canEdit && handleItemRowKeydown(event, i)}
                             >
                               <td class="px-4 py-3 truncate" title={itemRowLabel(i)}>{itemRowLabel(i)}</td>
                               <td class="px-4 py-3 font-mono whitespace-nowrap">{i.qty_per_device}</td>

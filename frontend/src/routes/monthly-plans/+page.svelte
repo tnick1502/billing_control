@@ -3,6 +3,13 @@
   import { api } from '$lib/api';
   import { formatQty, formatIntegerQty, formatAmount, formatDate, formatDateTime, formatFileSize } from '$lib/format';
   import type { MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPartWithCoverage, InvoiceCreate, Invoice, PartInvoiceCoverage, InvoiceFileInfo, PlanPartFile, RemaindersMatrix, RemainderPart, UndersupplyPart, InventoryDocument, Part } from '$lib/api';
+  import { can } from '$lib/permissions';
+
+  // Права: «Месячные планы» edit — генерация, количества, привязки, файлы, инвентаризация;
+  // full — ещё и отмена инвентаризации. Создание и правка самих счетов — по разделу «Счета».
+  $: canPlanEdit = $can('monthly_plans', 'edit');
+  $: canPlanFull = $can('monthly_plans', 'full');
+  $: canInvoiceEdit = $can('invoices', 'edit');
 
   type PlanDetail = { devices: MonthlyPlanDevice[]; parts: MonthlyPlanPartWithCoverage[] };
   type InventoryDraftRow = { part_id: number; qty_found: string; note: string };
@@ -1005,14 +1012,16 @@
         >
           {exportingPlanId !== null ? 'Готовим Excel…' : 'Выгрузить Excel'}
         </button>
-        <button
-          type="button"
-          on:click={updatePlan}
-          disabled={updatingPlanId !== null}
-          class="px-4 py-2 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors text-sm"
-        >
-          {updatingPlanId !== null ? 'Обновление...' : 'Обновить план'}
-        </button>
+        {#if canPlanEdit}
+          <button
+            type="button"
+            on:click={updatePlan}
+            disabled={updatingPlanId !== null}
+            class="px-4 py-2 bg-emerald-600 text-white font-medium rounded-lg hover:bg-emerald-500 disabled:opacity-50 transition-colors text-sm"
+          >
+            {updatingPlanId !== null ? 'Обновление...' : 'Обновить план'}
+          </button>
+        {/if}
       {/if}
       <button on:click={openRemainders} class="px-4 py-2 bg-zinc-700 text-white font-medium rounded-lg hover:bg-zinc-600 transition-colors text-sm">
         Остатки деталей
@@ -1043,13 +1052,15 @@
   {:else if !selectedPlan}
     <div class="rounded-xl border border-zinc-700 bg-zinc-800/40 p-8 text-center">
       <p class="text-zinc-400 mb-3">Нет плана за {monthLabel(selectedMonth)}</p>
-      <button
-        type="button"
-        on:click={() => { generateMonthInput = selectedMonth; generateModalOpen = true; }}
-        class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400 transition-colors text-sm"
-      >
-        Сгенерировать план
-      </button>
+      {#if canPlanEdit}
+        <button
+          type="button"
+          on:click={() => { generateMonthInput = selectedMonth; generateModalOpen = true; }}
+          class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400 transition-colors text-sm"
+        >
+          Сгенерировать план
+        </button>
+      {/if}
     </div>
   {:else if selectedPlanLoading}
     <p class="text-zinc-400">Загрузка плана...</p>
@@ -1079,7 +1090,7 @@
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <div class="flex flex-wrap items-center gap-3">
         <h3 class="text-sm font-medium text-zinc-400">Детали</h3>
-        {#if (selectedPlanDetail.parts ?? []).length > 0}
+        {#if canPlanEdit && (selectedPlanDetail.parts ?? []).length > 0}
           <label class="flex cursor-pointer select-none items-center gap-2 text-xs text-zinc-300">
             <input
               type="checkbox"
@@ -1109,14 +1120,16 @@
         {/if}
       </div>
       <div class="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          on:click={openLinkSelected}
-          disabled={selectedPlanRows.length === 0}
-          class="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-black hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          Привязать счёт{selectedPlanRows.length > 0 ? ` · ${selectedPlanRows.length}` : ''}
-        </button>
+        {#if canPlanEdit}
+          <button
+            type="button"
+            on:click={openLinkSelected}
+            disabled={selectedPlanRows.length === 0}
+            class="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-black hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Привязать счёт{selectedPlanRows.length > 0 ? ` · ${selectedPlanRows.length}` : ''}
+          </button>
+        {/if}
       {#if planPartGroupKeys.length > 0}
         <button
           type="button"
@@ -1149,6 +1162,7 @@
           >
             <input
               type="checkbox"
+              disabled={!canPlanEdit}
               checked={groupParts.length > 0 && groupParts.every((row) => selectedPlanPartIdSet.has(row.id))}
               on:change={() => togglePlanPartGroup(groupParts)}
               class="h-4 w-4 shrink-0 accent-amber-500"
@@ -1204,6 +1218,7 @@
                     <td class="px-2 py-3 text-center align-top">
                       <input
                         type="checkbox"
+                        disabled={!canPlanEdit}
                         checked={selectedPlanPartIdSet.has(p.id)}
                         on:change={(e) => togglePlanPartSelection(p.id, e.currentTarget.checked)}
                         class="h-4 w-4 accent-amber-500"
@@ -1226,22 +1241,25 @@
                           step="1"
                           min="0"
                           value={finalDraft[p.id] ?? ''}
+                          disabled={!canPlanEdit}
                           on:input={(e) => {
                             const el = e.currentTarget;
                             if (el instanceof HTMLInputElement) {
                               finalDraft = { ...finalDraft, [p.id]: el.value };
                             }
                           }}
-                          class="min-w-0 w-full px-2 py-1.5 bg-zinc-900 border border-zinc-600 rounded text-white text-sm font-mono"
+                          class="min-w-0 w-full px-2 py-1.5 bg-zinc-900 border border-zinc-600 rounded text-white text-sm font-mono disabled:border-zinc-800 disabled:text-zinc-300"
                         />
-                        <button
-                          type="button"
-                          disabled={savingFinalId === p.id}
-                          on:click={() => submitFinal(currentPlanId, p)}
-                          class="h-8 px-3 bg-zinc-600 text-white rounded text-xs font-medium hover:bg-zinc-500 disabled:opacity-50"
-                        >
-                          {savingFinalId === p.id ? '…' : 'Сохранить'}
-                        </button>
+                        {#if canPlanEdit}
+                          <button
+                            type="button"
+                            disabled={savingFinalId === p.id}
+                            on:click={() => submitFinal(currentPlanId, p)}
+                            class="h-8 px-3 bg-zinc-600 text-white rounded text-xs font-medium hover:bg-zinc-500 disabled:opacity-50"
+                          >
+                            {savingFinalId === p.id ? '…' : 'Сохранить'}
+                          </button>
+                        {/if}
                       </div>
                       {#if Number(p.qty_final) !== Number(p.qty_required)}
                         <div class="mt-1 text-[10px] text-zinc-500">расчёт по заказам: <span class="font-mono">{formatIntegerQty(p.qty_required)}</span></div>
@@ -1305,22 +1323,26 @@
                                   <span class="whitespace-nowrap rounded bg-black/20 px-2 py-1 text-[10px] {inv.payment_date ? 'text-emerald-300' : 'text-red-300'}">
                                     {inv.payment_date ? `Оплата ${formatDate(inv.payment_date)}` : 'Не оплачен'}
                                   </span>
-                                  {#if !inv.is_carryover}
+                                  {#if !inv.is_carryover && (canInvoiceEdit || canPlanEdit)}
                                     <span class="ml-auto flex flex-wrap items-center justify-end gap-1">
-                                      <button
-                                        type="button"
-                                        class="h-7 rounded border border-amber-500/40 bg-amber-500/10 px-2 text-[10px] font-medium text-amber-200 hover:bg-amber-500/20"
-                                        on:click={() => openEditInvoiceModal(inv, p.id)}
-                                      >
-                                        Изменить
-                                      </button>
-                                      <button
-                                        type="button"
-                                        class="h-7 rounded border border-red-500/40 bg-red-500/10 px-2 text-[10px] font-medium text-red-200 hover:bg-red-500/20"
-                                        on:click={() => unlinkLink(inv.link_id, p.id)}
-                                      >
-                                        Отвязать
-                                      </button>
+                                      {#if canInvoiceEdit}
+                                        <button
+                                          type="button"
+                                          class="h-7 rounded border border-amber-500/40 bg-amber-500/10 px-2 text-[10px] font-medium text-amber-200 hover:bg-amber-500/20"
+                                          on:click={() => openEditInvoiceModal(inv, p.id)}
+                                        >
+                                          Изменить
+                                        </button>
+                                      {/if}
+                                      {#if canPlanEdit}
+                                        <button
+                                          type="button"
+                                          class="h-7 rounded border border-red-500/40 bg-red-500/10 px-2 text-[10px] font-medium text-red-200 hover:bg-red-500/20"
+                                          on:click={() => unlinkLink(inv.link_id, p.id)}
+                                        >
+                                          Отвязать
+                                        </button>
+                                      {/if}
                                     </span>
                                   {/if}
                                 </div>
@@ -1367,6 +1389,7 @@
                           {/each}
                         </ul>
                       {/if}
+                      {#if canPlanEdit}
                       <div class="mt-2 flex flex-wrap justify-center gap-1.5">
                         <button
                           type="button"
@@ -1375,14 +1398,17 @@
                         >
                           {p.has_invoice ? 'Привязать ещё счёт' : 'Привязать счёт'}
                         </button>
-                        <button
-                          type="button"
-                          on:click={() => openCreateInvoiceModal(currentPlanId, [p.part_id])}
-                          class="min-h-8 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20"
-                        >
-                          Создать счёт
-                        </button>
+                        {#if canInvoiceEdit}
+                          <button
+                            type="button"
+                            on:click={() => openCreateInvoiceModal(currentPlanId, [p.part_id])}
+                            class="min-h-8 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-500/20"
+                          >
+                            Создать счёт
+                          </button>
+                        {/if}
                       </div>
+                      {/if}
                     </td>
                     <td
                       class="overflow-hidden px-3 py-3 text-center align-top {deliveryOk(p)
@@ -1412,25 +1438,28 @@
                               min="0"
                               max={Math.max(effectiveTarget(p) - Number(p.qty_inventory_covered_total ?? 0), 0)}
                               value={deliverDraft[p.id] ?? ''}
+                              disabled={!canPlanEdit}
                               on:input={(e) => {
                                 const el = e.currentTarget;
                                 if (el instanceof HTMLInputElement) {
                                   deliverDraft = { ...deliverDraft, [p.id]: el.value };
                                 }
                               }}
-                              class="min-w-0 w-full px-2 py-1.5 bg-zinc-900 border border-zinc-600 rounded text-white text-sm font-mono"
+                              class="min-w-0 w-full px-2 py-1.5 bg-zinc-900 border border-zinc-600 rounded text-white text-sm font-mono disabled:border-zinc-800 disabled:text-zinc-300"
                             />
                               <span class="shrink-0 whitespace-nowrap text-xs text-zinc-500">из {formatIntegerQty(Math.max(effectiveTarget(p) - Number(p.qty_inventory_covered_total ?? 0), 0))}</span>
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            disabled={savingDeliveredId === p.id}
-                            on:click={() => submitDelivered(currentPlanId, p)}
-                            class="h-8 px-3 bg-zinc-600 text-white rounded text-xs font-medium hover:bg-zinc-500 disabled:opacity-50"
-                          >
-                            {savingDeliveredId === p.id ? '…' : 'Сохранить'}
-                          </button>
+                          {#if canPlanEdit}
+                            <button
+                              type="button"
+                              disabled={savingDeliveredId === p.id}
+                              on:click={() => submitDelivered(currentPlanId, p)}
+                              class="h-8 px-3 bg-zinc-600 text-white rounded text-xs font-medium hover:bg-zinc-500 disabled:opacity-50"
+                            >
+                              {savingDeliveredId === p.id ? '…' : 'Сохранить'}
+                            </button>
+                          {/if}
                         </div>
                       {/if}
 
@@ -1451,14 +1480,16 @@
                                 >
                                   Скачать
                                 </button>
-                                <button
-                                  type="button"
-                                  on:click={() => deletePlanPartFile(currentPlanId, p.id, f.id)}
-                                  class="shrink-0 px-1.5 py-0.5 text-[10px] bg-red-900/60 rounded hover:bg-red-800 text-red-200"
-                                  title="Удалить файл"
-                                >
-                                  ✕
-                                </button>
+                                {#if canPlanEdit}
+                                  <button
+                                    type="button"
+                                    on:click={() => deletePlanPartFile(currentPlanId, p.id, f.id)}
+                                    class="shrink-0 px-1.5 py-0.5 text-[10px] bg-red-900/60 rounded hover:bg-red-800 text-red-200"
+                                    title="Удалить файл"
+                                  >
+                                    ✕
+                                  </button>
+                                {/if}
                               </div>
                             {/each}
                           </div>
@@ -1470,14 +1501,16 @@
                           bind:this={planPartFileInputs[p.id]}
                           on:change={(e) => handlePlanPartFileInput(currentPlanId, p.id, e)}
                         />
-                        <button
-                          type="button"
-                          disabled={uploadingFilesPartId === p.id}
-                          on:click={() => planPartFileInputs[p.id]?.click()}
-                          class="min-h-8 rounded-lg border border-zinc-600 bg-zinc-800/70 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-700 disabled:opacity-50"
-                        >
-                          {uploadingFilesPartId === p.id ? 'Загрузка…' : '+ Добавить файлы'}
-                        </button>
+                        {#if canPlanEdit}
+                          <button
+                            type="button"
+                            disabled={uploadingFilesPartId === p.id}
+                            on:click={() => planPartFileInputs[p.id]?.click()}
+                            class="min-h-8 rounded-lg border border-zinc-600 bg-zinc-800/70 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-700 disabled:opacity-50"
+                          >
+                            {uploadingFilesPartId === p.id ? 'Загрузка…' : '+ Добавить файлы'}
+                          </button>
+                        {/if}
                       </div>
                     </td>
                   </tr>
@@ -1526,6 +1559,7 @@
             <div class="mb-4 rounded-lg border border-red-900/60 bg-red-950/40 px-4 py-3 text-sm text-red-200">{inventoryError}</div>
           {/if}
 
+          {#if canPlanEdit}
           <div class="mb-4">
             <label for="inventory-part-search" class="mb-1 block text-sm text-zinc-300">Добавить найденную деталь</label>
             <input
@@ -1555,6 +1589,7 @@
               <p class="mt-1 text-xs text-zinc-500">Подходящих деталей нет или они уже добавлены.</p>
             {/if}
           </div>
+          {/if}
 
           {#if inventoryRows.length === 0}
             <div class="rounded-xl border border-dashed border-zinc-700 px-4 py-8 text-center text-sm text-zinc-500">
@@ -1583,6 +1618,7 @@
                           min="0.000001"
                           step="1"
                           bind:value={row.qty_found}
+                          disabled={!canPlanEdit}
                           aria-label={`Найдено для ${partName(row.part_id)}`}
                           class="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-white"
                         />
@@ -1590,6 +1626,7 @@
                       <td class="px-3 py-2">
                         <input
                           bind:value={row.note}
+                          disabled={!canPlanEdit}
                           maxlength="2000"
                           placeholder="Например, найдено на складе"
                           aria-label={`Примечание для ${partName(row.part_id)}`}
@@ -1597,7 +1634,9 @@
                         />
                       </td>
                       <td class="px-3 py-2 text-right">
-                        <button type="button" on:click={() => removeInventoryPart(row.part_id)} class="rounded px-2 py-1 text-red-300 hover:bg-red-950/60" title="Убрать строку">✕</button>
+                        {#if canPlanEdit}
+                          <button type="button" on:click={() => removeInventoryPart(row.part_id)} class="rounded px-2 py-1 text-red-300 hover:bg-red-950/60" title="Убрать строку">✕</button>
+                        {/if}
                       </td>
                     </tr>
                   {/each}
@@ -1608,7 +1647,7 @@
 
           <div class="mt-4">
             <label for="inventory-note" class="mb-1 block text-sm text-zinc-300">Комментарий к инвентаризации</label>
-            <textarea id="inventory-note" bind:value={inventoryNote} maxlength="5000" rows="2" placeholder="Опционально" class="w-full resize-none rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"></textarea>
+            <textarea id="inventory-note" disabled={!canPlanEdit} bind:value={inventoryNote} maxlength="5000" rows="2" placeholder="Опционально" class="w-full resize-none rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-white"></textarea>
           </div>
         {/if}
       </div>
@@ -1616,15 +1655,17 @@
       {#if !inventoryLoading}
         <div class="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-700 px-6 py-4">
           <div>
-            {#if inventoryDocument?.status === 'posted'}
+            {#if inventoryDocument?.status === 'posted' && canPlanFull}
               <button type="button" disabled={inventorySaving} on:click={cancelInventory} class="rounded-lg border border-red-800 bg-red-950/50 px-4 py-2 text-sm font-medium text-red-200 hover:bg-red-900/60 disabled:opacity-40">Отменить инвентаризацию</button>
             {/if}
           </div>
           <div class="flex gap-2">
             <button type="button" disabled={inventorySaving} on:click={() => inventoryModalOpen = false} class="rounded-lg bg-zinc-700 px-4 py-2 text-sm text-white hover:bg-zinc-600 disabled:opacity-40">Закрыть</button>
-            <button type="button" disabled={inventorySaving || inventoryRows.length === 0} on:click={saveInventory} class="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-40">
-              {inventorySaving ? 'Пересчёт…' : inventoryDocument?.status === 'posted' ? 'Сохранить и пересчитать' : 'Провести инвентаризацию'}
-            </button>
+            {#if canPlanEdit}
+              <button type="button" disabled={inventorySaving || inventoryRows.length === 0} on:click={saveInventory} class="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-40">
+                {inventorySaving ? 'Пересчёт…' : inventoryDocument?.status === 'posted' ? 'Сохранить и пересчитать' : 'Провести инвентаризацию'}
+              </button>
+            {/if}
           </div>
         </div>
       {/if}

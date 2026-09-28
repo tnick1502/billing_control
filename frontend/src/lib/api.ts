@@ -39,6 +39,19 @@ export function clearAuthToken() {
   if (typeof localStorage !== 'undefined') localStorage.removeItem(AUTH_TOKEN_KEY);
 }
 
+/**
+ * Глобальные сигналы для layout: сессия отозвана (401) или прав не хватило (403 —
+ * права роли могли поменяться, layout перечитает /auth/me и обновит меню/кнопки).
+ */
+export const AUTH_EXPIRED_EVENT = 'bc:auth-expired';
+export const FORBIDDEN_EVENT = 'bc:forbidden';
+
+function emitAuthSignal(status: number) {
+  if (typeof window === 'undefined') return;
+  if (status === 401) window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
+  if (status === 403) window.dispatchEvent(new CustomEvent(FORBIDDEN_EVENT));
+}
+
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
   const token = getAuthToken();
   const hasBody = options?.body != null && options.body !== '';
@@ -60,6 +73,7 @@ async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
     await delay(retryDelayMs(res));
   }
   if (!res.ok) {
+    if (path !== '/auth/me') emitAuthSignal(res.status);
     const err = (await res.json().catch(() => ({ detail: res.statusText }))) as {
       detail?: unknown;
       request_id?: unknown;
@@ -94,6 +108,7 @@ function filenameFromResponse(res: Response, fallback: string): string {
 }
 
 function parseApiError(res: Response, bodyText: string): ApiError {
+  emitAuthSignal(res.status);
   try {
     const err = JSON.parse(bodyText) as { detail?: unknown; request_id?: unknown };
     const d = err.detail;
@@ -154,7 +169,7 @@ export const api = {
         clearTimeout(timeoutId);
       }
     },
-    me: () => fetchApi<User>('/auth/me'),
+    me: () => fetchApi<CurrentUser>('/auth/me'),
     logout: async () => {
       const token = getAuthToken();
       try {
@@ -188,6 +203,15 @@ export const api = {
       delete: (id: number) => fetchApi<void>(`/admin/users/${id}`, { method: 'DELETE' }),
     },
     auditLogs: (limit = 200) => fetchApi<AuditLog[]>(`/admin/audit-logs?${new URLSearchParams({ limit: String(limit) })}`),
+    roles: {
+      list: () => fetchApi<Role[]>('/admin/roles'),
+      sections: () => fetchApi<RoleSectionsInfo>('/admin/roles/sections'),
+      create: (data: RoleCreate) => fetchApi<Role>('/admin/roles', { method: 'POST', body: JSON.stringify(data) }),
+      update: (id: number, data: RoleUpdate) => fetchApi<Role>(`/admin/roles/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+      copy: (id: number) => fetchApi<Role>(`/admin/roles/${id}/copy`, { method: 'POST' }),
+      delete: (id: number) => fetchApi<void>(`/admin/roles/${id}`, { method: 'DELETE' }),
+    },
+    dbStatus: () => fetchApi<DbStatus>('/admin/db-status'),
   },
   devices: {
     list: (includeArchived = false) => fetchApi<Device[]>(`/devices${includeArchived ? '?include_archived=true' : ''}`),
@@ -435,14 +459,70 @@ export const api = {
   },
 };
 
+export type PermissionLevel = 'none' | 'view' | 'edit' | 'full';
+export type SectionKey =
+  | 'monthly_plans'
+  | 'parts'
+  | 'devices'
+  | 'bom'
+  | 'import'
+  | 'orders'
+  | 'invoices'
+  | 'statistics';
+
 export interface User {
   id: number;
   username: string;
   full_name: string | null;
-  role: 'admin' | 'employee';
+  /** Код роли (roles.code): admin, employee или r_xxxxxxxx для созданных в редакторе. */
+  role: string;
+  role_name?: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
+}
+export interface CurrentUser extends User {
+  role_name: string | null;
+  is_superuser: boolean;
+  permissions: Record<SectionKey, PermissionLevel>;
+}
+export interface Role {
+  id: number;
+  code: string;
+  name: string;
+  description: string | null;
+  is_system: boolean;
+  is_superuser: boolean;
+  permissions: Record<SectionKey, PermissionLevel>;
+  revision: number;
+  users_count: number;
+  created_at: string;
+  updated_at: string;
+}
+export interface RoleCreate {
+  name: string;
+  description?: string | null;
+  permissions: Partial<Record<SectionKey, PermissionLevel>>;
+}
+export interface RoleUpdate extends Partial<RoleCreate> {
+  revision?: number;
+}
+export interface RoleSectionsInfo {
+  sections: { key: SectionKey; label: string; group: string; path: string }[];
+  levels: { key: PermissionLevel; label: string; hint: string }[];
+}
+export interface DbStatus {
+  pool: { size: number; checked_in: number; checked_out: number; overflow: number; connection_budget: number };
+  server: {
+    server_version: string;
+    max_connections: number | null;
+    total_connections: number;
+    application_name: string;
+    own_role_connections: { application_name: string; state: string; count: number }[];
+  } | null;
+  server_error: string | null;
+  auth_cache: { enabled: boolean; ttl_seconds: number; entries: number };
+  policy_cache_entries: number;
 }
 export interface UserLogin {
   username: string;
@@ -452,12 +532,12 @@ export interface UserCreate {
   username: string;
   password: string;
   full_name?: string | null;
-  role: 'admin' | 'employee';
+  role: string;
   is_active: boolean;
 }
 export interface AuthToken {
   token: string;
-  user: User;
+  user: CurrentUser;
 }
 export interface AuditLog {
   id: number;

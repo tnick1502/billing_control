@@ -3,6 +3,11 @@
   import { api } from '$lib/api';
   import { formatIntegerQty, formatDate, formatDateTime, formatAmount, formatFileSize } from '$lib/format';
   import type { Invoice, InvoiceCreate, InvoicePartLink, InvoicePartLinkCreate, InvoiceFileInfo } from '$lib/api';
+  import { can } from '$lib/permissions';
+
+  // Права раздела «Счета»: edit — создание, правка, файлы и привязки; full — удаление счёта и привязок.
+  $: canEdit = $can('invoices', 'edit');
+  $: canFull = $can('invoices', 'full');
 
   type CalendarDay = {
     date: string;
@@ -411,9 +416,11 @@
           →
         </button>
       {/if}
-      <button type="button" on:click={() => openCreate()} class="px-4 py-1.5 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400 transition-colors">
-        Добавить
-      </button>
+      {#if canEdit}
+        <button type="button" on:click={() => openCreate()} class="px-4 py-1.5 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400 transition-colors">
+          Добавить
+        </button>
+      {/if}
     </div>
   </div>
 
@@ -447,13 +454,15 @@
                 >
                   {day.day}
                 </button>
-                <button
-                  type="button"
-                  on:click={() => openCreate(day.date)}
-                  class="rounded bg-zinc-700 px-1.5 py-0.5 text-[10px] font-medium text-zinc-100 hover:bg-amber-400 hover:text-black"
-                >
-                  + Счёт
-                </button>
+                {#if canEdit}
+                  <button
+                    type="button"
+                    on:click={() => openCreate(day.date)}
+                    class="rounded bg-zinc-700 px-1.5 py-0.5 text-[10px] font-medium text-zinc-100 hover:bg-amber-400 hover:text-black"
+                  >
+                    + Счёт
+                  </button>
+                {/if}
               </div>
 
               {#if day.invoices.length > 0}
@@ -587,17 +596,19 @@
           <h2 class="text-lg font-semibold text-white">Счета за {dayLabel(selectedDayDate)}</h2>
           <p class="text-sm text-zinc-400">Всего: {selectedDayInvoices.length}</p>
         </div>
-        <button
-          type="button"
-          on:click={() => {
-            const date = selectedDayDate ?? isoDate(new Date());
-            selectedDayDate = null;
-            openCreate(date);
-          }}
-          class="px-3 py-1.5 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400"
-        >
-          + Счёт
-        </button>
+        {#if canEdit}
+          <button
+            type="button"
+            on:click={() => {
+              const date = selectedDayDate ?? isoDate(new Date());
+              selectedDayDate = null;
+              openCreate(date);
+            }}
+            class="px-3 py-1.5 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400"
+          >
+            + Счёт
+          </button>
+        {/if}
       </div>
 
       {#if selectedDayInvoices.length === 0}
@@ -648,7 +659,7 @@
       <h2 class="text-lg font-semibold text-white mb-4">{editingId ? `Счёт №${form.invoice_no}` : 'Новый счёт'}</h2>
 
       <form on:submit|preventDefault={save} class="rounded-xl border border-zinc-700 bg-zinc-900/35 p-4">
-        <div class="grid gap-4 md:grid-cols-2">
+        <fieldset disabled={!canEdit} class="min-w-0 grid gap-4 md:grid-cols-2">
           {#if editingId}
             <div>
               <label class="block text-sm text-zinc-400 mb-1">Порядковый номер</label>
@@ -684,7 +695,7 @@
               class="w-full px-3 py-2 bg-zinc-950 border border-zinc-700 rounded-lg text-white"
             ></textarea>
           </div>
-        </div>
+        </fieldset>
 
         {#if !editingId}
           <div class="mt-4">
@@ -694,11 +705,13 @@
         {/if}
 
         <div class="flex flex-wrap gap-2 pt-4">
-          <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">
-            {selectedInvoice ? 'Сохранить счёт' : 'Создать счёт'}
-          </button>
+          {#if canEdit}
+            <button type="submit" class="px-4 py-2 bg-amber-500 text-black font-medium rounded-lg hover:bg-amber-400">
+              {selectedInvoice ? 'Сохранить счёт' : 'Создать счёт'}
+            </button>
+          {/if}
           <button type="button" on:click={closeInvoiceModal} class="px-4 py-2 bg-zinc-700 text-white rounded-lg hover:bg-zinc-600">Закрыть</button>
-          {#if selectedInvoice}
+          {#if selectedInvoice && canFull}
             <button type="button" on:click={() => remove(selectedInvoice.id)} class="ml-auto px-4 py-2 bg-red-700 text-white rounded-lg hover:bg-red-600">Удалить</button>
           {/if}
         </div>
@@ -712,7 +725,7 @@
       <div class="mt-5 rounded-xl border border-zinc-700 bg-zinc-950/30 p-4">
         <div class="mb-4 flex flex-wrap items-center justify-between gap-2">
           <h3 class="text-base font-semibold text-white">Файлы и привязки счёта</h3>
-          {#if selectedInvoice}
+          {#if selectedInvoice && canEdit}
             <button on:click={openAddPart} class="px-3 py-1.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 text-sm">Привязать к детали</button>
           {/if}
         </div>
@@ -756,6 +769,7 @@
               {/if}
             </div>
 
+            {#if canEdit}
             <div class="rounded-xl border border-dashed border-zinc-600 bg-zinc-950/25 p-4">
               <h4 class="text-sm font-semibold text-zinc-200 mb-1">Добавить файл</h4>
               <p class="text-xs text-zinc-500 mb-3">Отдельно от списка вложений</p>
@@ -774,6 +788,7 @@
                 </button>
               </div>
             </div>
+            {/if}
           </div>
 
           <h4 class="text-sm text-zinc-400 mb-2 mt-6">Привязки к деталям</h4>
@@ -793,7 +808,9 @@
                   <td class="px-3 py-2">{partName(lp.part_id)}</td>
                   <td class="px-3 py-2 font-mono">{formatIntegerQty(lp.qty_covered)}</td>
                   <td>
-                    <button on:click={() => removePart(lp.id)} class="text-red-400 text-sm">Удал.</button>
+                    {#if canFull}
+                      <button on:click={() => removePart(lp.id)} class="text-red-400 text-sm">Удал.</button>
+                    {/if}
                   </td>
                 </tr>
               {/each}

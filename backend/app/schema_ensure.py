@@ -191,6 +191,11 @@ _PG_STATEMENTS = [
     "ALTER TABLE users DROP COLUMN IF EXISTS session_token",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()",
 
+    # --- roles (таблицу создаёт create_all по модели) ---
+    "ALTER TABLE roles ADD COLUMN IF NOT EXISTS description TEXT",
+    "ALTER TABLE roles ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_roles_name_ci ON roles (lower(name))",
+
     # --- audit_logs ---
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS username VARCHAR(64)",
     "ALTER TABLE audit_logs ADD COLUMN IF NOT EXISTS role VARCHAR(32)",
@@ -353,3 +358,44 @@ async def ensure_schema() -> None:
             "schema_ensure: не удалось привести схему БД к моделям; приложение остановлено. "
             f"Проблемные операции ({len(failures)}): " + " | ".join(failures)
         )
+
+
+async def ensure_users_role_fk() -> None:
+    """FK users.role → roles.code (ON DELETE RESTRICT): роль с пользователями нельзя удалить
+    даже в обход API. Вызывается ПОСЛЕ ``ensure_default_roles`` (все коды ролей уже есть).
+
+    Две фазы (NOT VALID + VALIDATE) и lock_timeout: на занятой БД не ждём блокировку
+    бесконечно. Ошибка НЕ останавливает приложение — ограничение продублировано в API;
+    при следующем старте попытка повторится.
+    """
+    if engine.dialect.name != "postgresql":
+        return
+    try:
+        async with engine.begin() as conn:
+            exists = (
+                await conn.execute(
+                    text(
+                        """
+                        SELECT 1 FROM pg_constraint c
+                        JOIN pg_class r ON r.oid = c.conrelid
+                        JOIN pg_namespace n ON n.oid = r.relnamespace
+                        WHERE r.relname = 'users' AND n.nspname = current_schema()
+                          AND c.conname = 'fk_users_role_roles'
+                        """
+                    )
+                )
+            ).first()
+            if exists:
+                return
+            await conn.execute(text("SET LOCAL lock_timeout = '5s'"))
+            await conn.execute(
+                text(
+                    "ALTER TABLE users ADD CONSTRAINT fk_users_role_roles "
+                    "FOREIGN KEY (role) REFERENCES roles(code) "
+                    "ON UPDATE CASCADE ON DELETE RESTRICT NOT VALID"
+                )
+            )
+            await conn.execute(text("ALTER TABLE users VALIDATE CONSTRAINT fk_users_role_roles"))
+        log.info("schema_ensure: users.role — добавлен FK fk_users_role_roles → roles(code)")
+    except Exception as e:  # noqa: BLE001
+        log.error("schema_ensure: FK users.role → roles.code не создан (%s) — повтор при следующем старте", e)

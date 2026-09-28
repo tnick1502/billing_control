@@ -7,7 +7,7 @@ from app.models.bom import DeviceBomVersion, DeviceBomItem
 from app.models.monthly_plan import MonthlyPlan, MonthlyPlanDevice, MonthlyPlanPart, MonthlyPlanPartFile
 from app.models.invoice import FileContent, Invoice, File, InvoiceFile, InvoicePartLink
 from app.models.inventory import InventoryDocument, InventoryItem, InventoryPlanAllocation
-from app.models.auth import User, AuditLog, UserSession
+from app.models.auth import Role, User, AuditLog, UserSession
 
 __all__ = [
     "Base",
@@ -31,6 +31,7 @@ __all__ = [
     "InventoryDocument",
     "InventoryItem",
     "InventoryPlanAllocation",
+    "Role",
     "User",
     "AuditLog",
     "UserSession",

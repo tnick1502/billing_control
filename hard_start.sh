@@ -74,6 +74,19 @@ for flag in SEED_ON_STARTUP FORCE_RESEED WIPE_DB; do
   [[ "${value}" == "false" ]] || die "${flag} должен быть строго false; получено: ${value:-<пусто>}"
 done
 
+# Пул БД проверяем ДО остановки работающего стека: при DB_POOL_SIZE + DB_MAX_OVERFLOW >
+# DB_CONNECTION_BUDGET backend не стартует, и сервис остался бы лежать.
+pool_size="$(read_env_value DB_POOL_SIZE)"
+pool_overflow="$(read_env_value DB_MAX_OVERFLOW)"
+pool_budget="$(read_env_value DB_CONNECTION_BUDGET)"
+for pair in "DB_POOL_SIZE:${pool_size}" "DB_MAX_OVERFLOW:${pool_overflow}" "DB_CONNECTION_BUDGET:${pool_budget}"; do
+  [[ "${pair#*:}" =~ ^[0-9]+$ ]] || die "${pair%%:*} должен быть целым числом; получено: ${pair#*:}"
+done
+if (( pool_size + pool_overflow > pool_budget )); then
+  die "DB_POOL_SIZE (${pool_size}) + DB_MAX_OVERFLOW (${pool_overflow}) > DB_CONNECTION_BUDGET (${pool_budget}) — backend не запустится. Исправьте .env (например 5/0/5)."
+fi
+printf 'Пул БД: %s соединений (overflow %s, бюджет %s).\n' "${pool_size}" "${pool_overflow}" "${pool_budget}"
+
 # Переменные оболочки имеют приоритет над .env в Docker Compose. Поэтому не только
 # проверяем файл, но и принудительно задаём безопасные значения для этого запуска.
 export SEED_ON_STARTUP=false

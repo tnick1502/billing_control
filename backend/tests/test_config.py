@@ -49,3 +49,23 @@ def test_invalid_pool_values_are_rejected(field: str, value: int):
     }
     with pytest.raises(ValidationError):
         Settings(_env_file=None, **values)
+
+
+def test_production_pool_of_five_is_accepted():
+    settings = Settings(_env_file=None, db_pool_size=5, db_max_overflow=0, db_connection_budget=5)
+    assert settings.db_pool_size == 5
+
+
+def test_pool_of_six_exceeds_budget_of_five():
+    with pytest.raises(ValidationError, match="DB_CONNECTION_BUDGET"):
+        Settings(_env_file=None, db_pool_size=6, db_max_overflow=0, db_connection_budget=5)
+
+
+def test_application_name_includes_instance():
+    assert Settings(_env_file=None, app_instance="Dev").db_application_name == "billing_control:dev"
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, app_instance="bad name!")
+
+
+def test_auth_cache_is_off_by_default():
+    assert Settings(_env_file=None).auth_cache_ttl_seconds == 0
