@@ -209,7 +209,7 @@ RULES: tuple[Rule, ...] = (
 # Зависимые права ЧТЕНИЯ: раздел (с уровнем ≥ view) → эндпоинты, которые нужны его странице.
 DEPENDENCY_READS: dict[str, tuple[str, ...]] = {
     "monthly_plans": ("/devices", "/parts", "/invoices/**"),
-    "invoices": ("/monthly-plans", "/parts", "/files/{id}/download"),
+    "invoices": ("/monthly-plans", "/parts"),
     "orders": ("/devices", "/parts", "/devices/{id}/bom"),
     "bom": ("/devices", "/parts"),
 }

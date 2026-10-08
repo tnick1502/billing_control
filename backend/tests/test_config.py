@@ -67,5 +67,6 @@ def test_application_name_includes_instance():
         Settings(_env_file=None, app_instance="bad name!")
 
 
-def test_auth_cache_is_off_by_default():
-    assert Settings(_env_file=None).auth_cache_ttl_seconds == 0
+def test_auth_cache_is_on_by_default_and_can_be_disabled():
+    assert Settings(_env_file=None).auth_cache_ttl_seconds == 30
+    assert Settings(_env_file=None, auth_cache_ttl_seconds=0).auth_cache_ttl_seconds == 0

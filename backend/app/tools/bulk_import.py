@@ -40,6 +40,10 @@ class ImportError_(Exception):
     """Ошибка валидации входного файла (с человекочитаемым путём к проблеме)."""
 
 
+class ImportAuthorizationError(ImportError_):
+    """Импорт затронул существующую спецификацию без права на такие изменения."""
+
+
 # --------------------------------------------------------------------------- #
 # Помощники нормализации                                                       #
 # --------------------------------------------------------------------------- #
@@ -327,7 +331,7 @@ async def _next_bom_version(session: AsyncSession, device_id: int) -> int:
 
 
 async def import_document(
-    session: AsyncSession, doc: ImportDoc, *, update_existing: bool
+    session: AsyncSession, doc: ImportDoc, *, update_existing: bool, allow_destructive: bool
 ) -> Stats:
     stats = Stats()
     part_cache: dict[tuple[str, str], Part] = {}
@@ -367,6 +371,10 @@ async def import_document(
             continue
 
         if existing_bom and update_existing:
+            if not allow_destructive:
+                raise ImportAuthorizationError(
+                    f"{dev_spec.path}: пересборка существующей спецификации требует уровня «Полный»"
+                )
             await session.execute(
                 delete(DeviceBomItem).where(DeviceBomItem.bom_version_id == existing_bom.id)
             )
@@ -389,7 +397,7 @@ async def import_document(
 
         # Статус active/current — единственный на прибор: остальные архивируем (как в API).
         if bom_spec.status in ("active", "current"):
-            await session.execute(
+            archived = await session.execute(
                 update(DeviceBomVersion)
                 .where(
                     DeviceBomVersion.device_id == device.id,
@@ -397,7 +405,15 @@ async def import_document(
                     DeviceBomVersion.status == bom_spec.status,
                 )
                 .values(status="archived")
+                .returning(DeviceBomVersion.id)
             )
+            if archived.first() is not None and not allow_destructive:
+                # RETURNING показывает, изменила ли команда существующую версию.
+                # Вызывающий код откатит всю транзакцию, включая это архивирование.
+                raise ImportAuthorizationError(
+                    f"{dev_spec.path}: активация новой спецификации архивирует действующую; "
+                    "нужен уровень «Полный»"
+                )
 
         # Позиции спецификации.
         seen_parts: set[int] = set()
@@ -488,7 +504,9 @@ async def _run(path: Path, *, dry_run: bool, update_existing: bool) -> int:
 
     async with async_session_maker() as session:
         try:
-            stats = await import_document(session, doc, update_existing=update_existing)
+            stats = await import_document(
+                session, doc, update_existing=update_existing, allow_destructive=True
+            )
             if dry_run:
                 await session.rollback()
                 print("[DRY-RUN] изменения откатаны, в БД ничего не записано.\n")

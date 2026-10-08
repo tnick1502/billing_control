@@ -12,6 +12,61 @@ from app.database import engine
 log = logging.getLogger(__name__)
 
 
+# Старые колонки больше не используются моделью, но могут содержать данные.
+# Их удаление при каждом старте опасно: сначала нужна отдельная миграция с бэкапом.
+_LEGACY_COLUMNS_REQUIRING_MANUAL_MIGRATION = (
+    ("devices", "is_active"),
+    ("parts", "is_active"),
+    ("parts", "uom"),
+    ("orders", "status"),
+    ("device_bom_items", "scrap_rate"),
+    ("invoices", "currency"),
+    ("invoices", "status"),
+    ("invoice_part_links", "amount_allocated"),
+    ("users", "session_token"),
+    ("files", "storage"),
+    ("files", "bucket"),
+    ("files", "object_key"),
+    ("files", "etag"),
+)
+
+
+async def _preflight_legacy_schema(conn) -> None:
+    """Остановить запуск до автоматической потери старых колонок или округления BOM."""
+    values = ", ".join(f"('{table}', '{column}')" for table, column in _LEGACY_COLUMNS_REQUIRING_MANUAL_MIGRATION)
+    rows = (
+        await conn.execute(
+            text(
+                "SELECT c.table_name, c.column_name FROM information_schema.columns c "
+                f"JOIN (VALUES {values}) AS legacy(table_name, column_name) "
+                "USING (table_name, column_name) "
+                "WHERE c.table_schema = current_schema()"
+            )
+        )
+    ).all()
+    if rows:
+        names = ", ".join(f"{table}.{column}" for table, column in rows)
+        raise RuntimeError(
+            "Обнаружены старые колонки с потенциальными данными: " + names + ". "
+            "Автоматическое удаление остановлено; сначала проверьте копию БД и выполните отдельную миграцию."
+        )
+
+    qty_type = (
+        await conn.execute(
+            text(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_schema = current_schema() "
+                "AND table_name = 'device_bom_items' AND column_name = 'qty_per_device'"
+            )
+        )
+    ).scalar_one_or_none()
+    if qty_type is not None and qty_type != "integer":
+        raise RuntimeError(
+            "device_bom_items.qty_per_device имеет тип " + qty_type + ". "
+            "Автоматическое округление значений остановлено; нужна проверенная отдельная миграция."
+        )
+
+
 def _safe_pg_ident(name: str) -> bool:
     return bool(name) and name.replace("_", "").isalnum()
 
@@ -32,7 +87,8 @@ async def _ensure_invoice_files_composite_pk_postgresql(conn) -> None:
             )
         )
     except Exception as e:
-        log.warning("schema_ensure: invoice_files.created_at — %s", e)
+        log.exception("schema_ensure: invoice_files.created_at не добавлен")
+        raise RuntimeError("schema_ensure: invoice_files.created_at не добавлен") from e
     result = await conn.execute(
         text(
             """
@@ -111,7 +167,8 @@ async def _ensure_invoice_files_composite_pk_postgresql(conn) -> None:
         await conn.execute(text("ALTER TABLE invoice_files ADD PRIMARY KEY (invoice_id, file_id)"))
         log.info("schema_ensure: invoice_files — добавлен PRIMARY KEY (invoice_id, file_id)")
     except Exception as e:
-        log.warning("schema_ensure: invoice_files ADD PRIMARY KEY — %s", e)
+        log.exception("schema_ensure: invoice_files ADD PRIMARY KEY не выполнен")
+        raise RuntimeError("schema_ensure: invoice_files ADD PRIMARY KEY не выполнен") from e
 
 # PostgreSQL (docker / prod)
 _PG_STATEMENTS = [
@@ -119,7 +176,6 @@ _PG_STATEMENTS = [
     "ALTER TABLE devices ADD COLUMN IF NOT EXISTS description TEXT",
     "ALTER TABLE devices ADD COLUMN IF NOT EXISTS model VARCHAR(128)",
     "ALTER TABLE devices ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT false",
-    "ALTER TABLE devices DROP COLUMN IF EXISTS is_active",
 
     # --- parts ---
     "ALTER TABLE parts ADD COLUMN IF NOT EXISTS description TEXT",
@@ -128,14 +184,11 @@ _PG_STATEMENTS = [
     "ALTER TABLE parts ADD COLUMN IF NOT EXISTS part_type VARCHAR(128)",
     "ALTER TABLE parts ADD COLUMN IF NOT EXISTS supplier VARCHAR(255)",
     "ALTER TABLE parts ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT false",
-    "ALTER TABLE parts DROP COLUMN IF EXISTS is_active",
-    "ALTER TABLE parts DROP COLUMN IF EXISTS uom",
 
     # --- orders ---
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS description TEXT",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer VARCHAR(255)",
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS contract_no VARCHAR(128)",
-    "ALTER TABLE orders DROP COLUMN IF EXISTS status",
 
     # --- order_items ---
     "ALTER TABLE order_items ADD COLUMN IF NOT EXISTS price NUMERIC(18,2)",
@@ -151,12 +204,9 @@ _PG_STATEMENTS = [
     "ALTER TABLE device_bom_versions ADD COLUMN IF NOT EXISTS valid_to TIMESTAMPTZ",
 
     # --- device_bom_items ---
-    "ALTER TABLE device_bom_items ALTER COLUMN qty_per_device TYPE INTEGER USING ROUND(qty_per_device)::integer",
     "ALTER TABLE device_bom_items ALTER COLUMN part_id DROP NOT NULL",
     "ALTER TABLE device_bom_items ADD COLUMN IF NOT EXISTS sub_device_id INTEGER REFERENCES devices(id) ON DELETE CASCADE",
     "ALTER TABLE device_bom_items ADD COLUMN IF NOT EXISTS sub_bom_version_id INTEGER REFERENCES device_bom_versions(id) ON DELETE SET NULL",
-    # scrap_rate удалён из модели — выкидываем колонку, если осталась от старой схемы.
-    "ALTER TABLE device_bom_items DROP COLUMN IF EXISTS scrap_rate",
     "ALTER TABLE device_bom_items ADD COLUMN IF NOT EXISTS note TEXT",
 
     # --- monthly_plans ---
@@ -173,11 +223,8 @@ _PG_STATEMENTS = [
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS supplier VARCHAR(255)",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS note TEXT",
     "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS payment_date DATE",
-    "ALTER TABLE invoices DROP COLUMN IF EXISTS currency",
-    "ALTER TABLE invoices DROP COLUMN IF EXISTS status",
 
     # --- invoice_part_links ---
-    "ALTER TABLE invoice_part_links DROP COLUMN IF EXISTS amount_allocated",
     "ALTER TABLE invoice_part_links ADD COLUMN IF NOT EXISTS is_carryover BOOLEAN NOT NULL DEFAULT false",
     "ALTER TABLE invoice_part_links ADD COLUMN IF NOT EXISTS note TEXT",
     "ALTER TABLE invoice_part_links ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now()",
@@ -187,8 +234,6 @@ _PG_STATEMENTS = [
 
     # --- users ---
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS full_name VARCHAR(255)",
-    # session_token больше не используется — сессии вынесены в таблицу user_sessions (только хэш токена).
-    "ALTER TABLE users DROP COLUMN IF EXISTS session_token",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()",
 
     # --- roles (таблицу создаёт create_all по модели) ---
@@ -284,11 +329,6 @@ _PG_FILES_BYTEA_MIGRATION = [
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS content_type VARCHAR(128)",
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS size_bytes BIGINT",
     "ALTER TABLE files ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMPTZ NOT NULL DEFAULT now()",
-    "ALTER TABLE files DROP CONSTRAINT IF EXISTS uq_files_bucket_key",
-    "ALTER TABLE files DROP COLUMN IF EXISTS storage",
-    "ALTER TABLE files DROP COLUMN IF EXISTS bucket",
-    "ALTER TABLE files DROP COLUMN IF EXISTS object_key",
-    "ALTER TABLE files DROP COLUMN IF EXISTS etag",
 ]
 
 
@@ -316,16 +356,19 @@ async def _ensure_bom_subdev_unique(conn) -> None:
         )
         log.info("schema_ensure: device_bom_items — added UNIQUE(bom_version_id, sub_device_id)")
     except Exception as e:
-        log.warning("schema_ensure: uq_device_bom_items_bom_subdev — %s", e)
+        log.exception("schema_ensure: uq_device_bom_items_bom_subdev не добавлен")
+        raise RuntimeError("schema_ensure: uq_device_bom_items_bom_subdev не добавлен") from e
 
 
 async def ensure_schema() -> None:
     """Привести существующую PostgreSQL-схему к текущим моделям.
 
-    Все выражения идемпотентны (IF EXISTS / IF NOT EXISTS / приведение к тому же типу),
-    поэтому в норме не падают. Если хоть одно упало — это реальная проблема схемы:
-    собираем ВСЕ ошибки, логируем и поднимаем исключение, чтобы приложение НЕ стартовало
-    с полу-мигрированной БД (раньше ошибки молча проглатывались — отсюда тихая порча данных).
+    До DDL проверяем старые колонки и типы, требующие удаления или округления:
+    такие преобразования проводятся только отдельной миграцией после проверки данных.
+
+    Остальные выражения рассчитаны на повторный запуск. При первой ошибке DDL
+    откатываем всю транзакцию и останавливаем приложение: PostgreSQL не позволяет
+    продолжать ту же транзакцию после ошибки SQL.
 
     Для sqlite (тесты) ALTER-миграции не нужны: схему целиком создаёт ``create_all`` по моделям.
     """
@@ -336,28 +379,24 @@ async def ensure_schema() -> None:
         log.warning("schema_ensure: пропуск для dialect=%s", dialect)
         return
 
+    async with engine.connect() as conn:
+        await _preflight_legacy_schema(conn)
+
     statements = (
         list(_PG_STATEMENTS)
         + _PG_FILES_BYTEA_MIGRATION
         + _PG_INVENTORY_SCHEMA
         + _PG_INDEXES
     )
-    failures: list[str] = []
     async with engine.begin() as conn:
         for sql in statements:
             try:
                 await conn.execute(text(sql))
-            except Exception as e:  # noqa: BLE001 — копим все ошибки, чтобы показать разом
+            except Exception as e:  # noqa: BLE001 — добавляем контекст проблемной команды
                 log.error("schema_ensure: НЕ выполнено: %s — %s", sql, e)
-                failures.append(f"{sql} -> {e}")
+                raise RuntimeError(f"schema_ensure: не выполнено {sql}") from e
         await _ensure_invoice_files_composite_pk_postgresql(conn)
         await _ensure_bom_subdev_unique(conn)
-
-    if failures:
-        raise RuntimeError(
-            "schema_ensure: не удалось привести схему БД к моделям; приложение остановлено. "
-            f"Проблемные операции ({len(failures)}): " + " | ".join(failures)
-        )
 
 
 async def ensure_users_role_fk() -> None:
@@ -365,37 +404,38 @@ async def ensure_users_role_fk() -> None:
     даже в обход API. Вызывается ПОСЛЕ ``ensure_default_roles`` (все коды ролей уже есть).
 
     Две фазы (NOT VALID + VALIDATE) и lock_timeout: на занятой БД не ждём блокировку
-    бесконечно. Ошибка НЕ останавливает приложение — ограничение продублировано в API;
-    при следующем старте попытка повторится.
+    бесконечно. Ошибка останавливает запуск: без проверенного FK защита неполна.
     """
     if engine.dialect.name != "postgresql":
         return
     try:
         async with engine.begin() as conn:
-            exists = (
+            validated = (
                 await conn.execute(
                     text(
                         """
-                        SELECT 1 FROM pg_constraint c
+                        SELECT c.convalidated FROM pg_constraint c
                         JOIN pg_class r ON r.oid = c.conrelid
                         JOIN pg_namespace n ON n.oid = r.relnamespace
                         WHERE r.relname = 'users' AND n.nspname = current_schema()
-                          AND c.conname = 'fk_users_role_roles'
+                          AND c.conname = 'fk_users_role_roles' AND c.contype = 'f'
                         """
                     )
                 )
-            ).first()
-            if exists:
+            ).scalar_one_or_none()
+            if validated is True:
                 return
             await conn.execute(text("SET LOCAL lock_timeout = '5s'"))
-            await conn.execute(
-                text(
-                    "ALTER TABLE users ADD CONSTRAINT fk_users_role_roles "
-                    "FOREIGN KEY (role) REFERENCES roles(code) "
-                    "ON UPDATE CASCADE ON DELETE RESTRICT NOT VALID"
+            if validated is None:
+                await conn.execute(
+                    text(
+                        "ALTER TABLE users ADD CONSTRAINT fk_users_role_roles "
+                        "FOREIGN KEY (role) REFERENCES roles(code) "
+                        "ON UPDATE CASCADE ON DELETE RESTRICT NOT VALID"
+                    )
                 )
-            )
             await conn.execute(text("ALTER TABLE users VALIDATE CONSTRAINT fk_users_role_roles"))
-        log.info("schema_ensure: users.role — добавлен FK fk_users_role_roles → roles(code)")
+        log.info("schema_ensure: users.role — FK fk_users_role_roles проверен")
     except Exception as e:  # noqa: BLE001
-        log.error("schema_ensure: FK users.role → roles.code не создан (%s) — повтор при следующем старте", e)
+        log.exception("schema_ensure: FK users.role → roles.code не проверен; запуск остановлен")
+        raise RuntimeError("FK users.role → roles.code не создан или не проверен") from e

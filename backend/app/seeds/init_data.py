@@ -57,7 +57,7 @@ async def generate_test_data(session: AsyncSession) -> None:
     # Phase 1: load devices, parts and BOMs from the prepared import file
     raw = json.loads(_IMPORT_FILE.read_text(encoding="utf-8"))
     doc = parse_document(raw)
-    await _bulk_import(session, doc, update_existing=False)
+    await _bulk_import(session, doc, update_existing=False, allow_destructive=True)
 
     # Phase 2: query imported devices with their active BOMs
     rows = (await session.execute(

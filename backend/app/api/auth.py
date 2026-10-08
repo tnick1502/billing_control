@@ -334,6 +334,11 @@ def _new_code() -> str:
     return f"r_{secrets.token_hex(4)}"
 
 
+def _copy_role_name(source_name: str, number: int) -> str:
+    suffix = " (копия)" if number == 1 else f" (копия {number})"
+    return f"{source_name[:128 - len(suffix)]}{suffix}"
+
+
 @router.get("/admin/roles/sections")
 async def role_sections(_: User = Depends(require_admin)):
     """Справочник разделов и уровней — фронт не хардкодит список."""
@@ -391,13 +396,12 @@ async def copy_role(
     src = await _get_role_or_404(session, role_id)
     if src.is_superuser:
         raise HTTPException(status_code=400, detail="Системную роль администратора копировать нельзя")
-    base = f"{src.name} (копия)"
-    name, n = base, 2
+    name, n = _copy_role_name(src.name, 1), 2
     while await _name_taken(session, name):
-        name, n = f"{base} {n}", n + 1
+        name, n = _copy_role_name(src.name, n), n + 1
     role = Role(
         code=_new_code(),
-        name=name[:128],
+        name=name,
         description=src.description,
         permissions=normalize_permissions(src.permissions),
         revision=1,

@@ -25,7 +25,7 @@ from app.permissions import FULL
 from app.config import settings
 from app.database import async_session_maker, get_db
 from app.models import Device, DeviceBomItem, DeviceBomVersion, Part, User
-from app.tools.bulk_import import ImportError_, import_document, parse_document
+from app.tools.bulk_import import ImportAuthorizationError, ImportError_, import_document, parse_document
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 
@@ -64,11 +64,19 @@ async def import_bom(
 
     async with async_session_maker() as session:
         try:
-            stats = await import_document(session, doc, update_existing=update_existing)
+            stats = await import_document(
+                session,
+                doc,
+                update_existing=update_existing,
+                allow_destructive=dry_run or get_policy(request).level("import") >= FULL,
+            )
             if dry_run:
                 await session.rollback()
             else:
                 await session.commit()
+        except ImportAuthorizationError as exc:
+            await session.rollback()
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ImportError_ as exc:
             await session.rollback()
             return JSONResponse(status_code=400, content={"detail": str(exc)})

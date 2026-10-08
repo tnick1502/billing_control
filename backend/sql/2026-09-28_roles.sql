@@ -27,14 +27,20 @@ CREATE TABLE IF NOT EXISTS roles (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_roles_name_ci ON roles (lower(name));
 
--- Системные роли. Пресет «Сотрудник» = ровно прежние права сотрудника.
+-- «Сотрудник» создаётся при первом засеве либо если у него уже есть пользователи.
+-- После удаления роли администратором повторный запуск скрипта её не воскрешает.
+INSERT INTO roles (code, name, description, is_system, is_superuser, permissions)
+SELECT 'employee', 'Сотрудник', 'Планы — полностью, счета — без удаления, остальное — просмотр',
+       false, false,
+       '{"monthly_plans":"full","invoices":"edit","parts":"view","devices":"view",
+         "bom":"view","orders":"view","statistics":"view","import":"none"}'::jsonb
+WHERE NOT EXISTS (SELECT 1 FROM roles)
+   OR EXISTS (SELECT 1 FROM users WHERE role = 'employee')
+ON CONFLICT (code) DO NOTHING;
+
 INSERT INTO roles (code, name, description, is_system, is_superuser, permissions) VALUES
   ('admin', 'Администратор', 'Системная роль: полный доступ, управление пользователями и ролями',
-   true, true, '{}'::jsonb),
-  ('employee', 'Сотрудник', 'Планы — полностью, счета — без удаления, остальное — просмотр',
-   false, false,
-   '{"monthly_plans":"full","invoices":"edit","parts":"view","devices":"view",
-     "bom":"view","orders":"view","statistics":"view","import":"none"}'::jsonb)
+   true, true, '{}'::jsonb)
 ON CONFLICT (code) DO NOTHING;
 
 -- Страховка: если у пользователей встречается неизвестный код роли — роль без прав.
@@ -55,8 +61,9 @@ BEGIN
   ) THEN
     ALTER TABLE users ADD CONSTRAINT fk_users_role_roles
       FOREIGN KEY (role) REFERENCES roles(code) ON UPDATE CASCADE ON DELETE RESTRICT NOT VALID;
-    ALTER TABLE users VALIDATE CONSTRAINT fk_users_role_roles;
   END IF;
+  -- Повторный запуск также доводит до конца ограничение, оставшееся NOT VALID.
+  ALTER TABLE users VALIDATE CONSTRAINT fk_users_role_roles;
 END $$;
 
 COMMIT;
